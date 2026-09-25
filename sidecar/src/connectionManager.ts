@@ -178,10 +178,10 @@ export class ConnectionManager {
     return { latencyMs: Date.now() - t0 };
   }
 
-  async key(connectionId: string, sessionId: string, text: string): Promise<void> {
+  async key(connectionId: string, sessionId: string, key: string, code: string): Promise<void> {
     const { session } = this.getSession(connectionId, sessionId);
     const cdp = await ensureCdpSession(session.page, session);
-    await dispatchKey(cdp, text);
+    await dispatchKey(cdp, key, code);
   }
 
   // --- internals ---
