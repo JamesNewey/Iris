@@ -76,21 +76,39 @@ async fn send_request(
 }
 
 #[tauri::command]
-async fn connect_client(
+async fn add_connection(
     state: tauri::State<'_, Arc<SidecarState>>,
+    name: String,
     endpoint: String,
 ) -> Result<Value, String> {
-    send_request(&state, json!({ "type": "connect", "endpoint": endpoint })).await
+    send_request(
+        &state,
+        json!({ "type": "addConnection", "name": name, "endpoint": endpoint }),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn remove_connection(
+    state: tauri::State<'_, Arc<SidecarState>>,
+    connection_id: String,
+) -> Result<Value, String> {
+    send_request(
+        &state,
+        json!({ "type": "removeConnection", "connectionId": connection_id }),
+    )
+    .await
 }
 
 #[tauri::command]
 async fn start_screencast(
     state: tauri::State<'_, Arc<SidecarState>>,
+    connection_id: String,
     session_id: String,
 ) -> Result<Value, String> {
     send_request(
         &state,
-        json!({ "type": "startScreencast", "sessionId": session_id }),
+        json!({ "type": "startScreencast", "connectionId": connection_id, "sessionId": session_id }),
     )
     .await
 }
@@ -98,11 +116,12 @@ async fn start_screencast(
 #[tauri::command]
 async fn stop_screencast(
     state: tauri::State<'_, Arc<SidecarState>>,
+    connection_id: String,
     session_id: String,
 ) -> Result<Value, String> {
     send_request(
         &state,
-        json!({ "type": "stopScreencast", "sessionId": session_id }),
+        json!({ "type": "stopScreencast", "connectionId": connection_id, "sessionId": session_id }),
     )
     .await
 }
@@ -110,13 +129,14 @@ async fn stop_screencast(
 #[tauri::command]
 async fn send_click(
     state: tauri::State<'_, Arc<SidecarState>>,
+    connection_id: String,
     session_id: String,
     x: f64,
     y: f64,
 ) -> Result<Value, String> {
     send_request(
         &state,
-        json!({ "type": "click", "sessionId": session_id, "x": x, "y": y }),
+        json!({ "type": "click", "connectionId": connection_id, "sessionId": session_id, "x": x, "y": y }),
     )
     .await
 }
@@ -188,7 +208,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            connect_client,
+            add_connection,
+            remove_connection,
             start_screencast,
             stop_screencast,
             send_click
