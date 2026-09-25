@@ -2,8 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 type SessionSummary = { id: string; url: string; title: string };
-type ConnectResult = { browserVersion: string; sessions: SessionSummary[] };
-type FrameEvent = { type: "frame"; sessionId: string; data: string };
+type AddConnectionResult = { connectionId: string; browserVersion: string; sessions: SessionSummary[] };
+type FrameEvent = { type: "frame"; connectionId: string; sessionId: string; data: string };
 
 let statusEl: HTMLElement | null;
 let sessionsEl: HTMLElement | null;
@@ -12,6 +12,7 @@ let controlSessionIdEl: HTMLElement | null;
 let canvasEl: HTMLCanvasElement | null;
 let latencyEl: HTMLElement | null;
 
+let activeConnectionId: string | null = null;
 let activeSessionId: string | null = null;
 let naturalWidth = 0;
 let naturalHeight = 0;
@@ -20,7 +21,7 @@ function setStatus(text: string) {
   if (statusEl) statusEl.textContent = text;
 }
 
-function renderSessions(sessions: SessionSummary[]) {
+function renderSessions(connectionId: string, sessions: SessionSummary[]) {
   if (!sessionsEl) return;
   sessionsEl.innerHTML = "";
   for (const s of sessions) {
@@ -29,18 +30,19 @@ function renderSessions(sessions: SessionSummary[]) {
     row.textContent = `${s.id} — ${s.title || "(untitled)"} — ${s.url} `;
     const btn = document.createElement("button");
     btn.textContent = "Take control";
-    btn.addEventListener("click", () => takeControl(s.id));
+    btn.addEventListener("click", () => takeControl(connectionId, s.id));
     row.appendChild(btn);
     sessionsEl.appendChild(row);
   }
 }
 
-async function takeControl(sessionId: string) {
+async function takeControl(connectionId: string, sessionId: string) {
+  activeConnectionId = connectionId;
   activeSessionId = sessionId;
   if (controlSessionIdEl) controlSessionIdEl.textContent = sessionId;
   if (controlEl) controlEl.style.display = "block";
   setStatus(`Starting screencast for ${sessionId}...`);
-  await invoke("start_screencast", { sessionId });
+  await invoke("start_screencast", { connectionId, sessionId });
   setStatus(`Live: ${sessionId}`);
 }
 
@@ -58,12 +60,13 @@ function drawFrame(dataBase64: string) {
 }
 
 async function handleCanvasClick(ev: MouseEvent) {
-  if (!activeSessionId || !canvasEl || !naturalWidth || !naturalHeight) return;
+  if (!activeConnectionId || !activeSessionId || !canvasEl || !naturalWidth || !naturalHeight) return;
   const rect = canvasEl.getBoundingClientRect();
   const cx = ((ev.clientX - rect.left) / rect.width) * naturalWidth;
   const cy = ((ev.clientY - rect.top) / rect.height) * naturalHeight;
   const t0 = performance.now();
   const result = await invoke<{ latencyMs: number }>("send_click", {
+    connectionId: activeConnectionId,
     sessionId: activeSessionId,
     x: cx,
     y: cy,
@@ -86,21 +89,27 @@ window.addEventListener("DOMContentLoaded", () => {
 
   document.querySelector("#connect-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const input = document.querySelector<HTMLInputElement>("#endpoint-input");
-    const endpoint = input?.value ?? "";
+    const nameInput = document.querySelector<HTMLInputElement>("#name-input");
+    const endpointInput = document.querySelector<HTMLInputElement>("#endpoint-input");
+    const name = nameInput?.value || "Test client";
+    const endpoint = endpointInput?.value ?? "";
     setStatus(`Connecting to ${endpoint}...`);
     try {
-      const result = await invoke<ConnectResult>("connect_client", { endpoint });
+      const result = await invoke<AddConnectionResult>("add_connection", { name, endpoint });
       setStatus(`Connected — Chrome ${result.browserVersion}, ${result.sessions.length} session(s)`);
-      renderSessions(result.sessions);
+      renderSessions(result.connectionId, result.sessions);
     } catch (err) {
       setStatus(`Connect failed: ${err}`);
     }
   });
 
   listen<FrameEvent>("sidecar-frame", (event) => {
-    if (event.payload.sessionId === activeSessionId) {
+    if (event.payload.connectionId === activeConnectionId && event.payload.sessionId === activeSessionId) {
       drawFrame(event.payload.data);
     }
+  });
+
+  listen<Record<string, unknown>>("sidecar-event", (event) => {
+    console.log("sidecar-event", event.payload);
   });
 });
