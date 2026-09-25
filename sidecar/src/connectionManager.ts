@@ -43,10 +43,10 @@ export class ConnectionManager {
 
   constructor(private emit: (event: SidecarEvent) => void) {}
 
-  async addConnection(name: string, endpoint: string): Promise<{ connectionId: string; browserVersion: string; sessions: SessionSummary[] }> {
+  async addConnection(name: string, endpoint: string, token?: string): Promise<{ connectionId: string; browserVersion: string; sessions: SessionSummary[] }> {
     const id = randomUUID();
     const entry: ConnectionEntry = {
-      config: { id, name, endpoint },
+      config: { id, name, endpoint, token },
       status: "connecting",
       browser: null,
       browserVersion: null,
@@ -182,7 +182,9 @@ export class ConnectionManager {
     entry.status = "connecting";
     this.emit({ type: "connectionStatus", connectionId: entry.config.id, status: "connecting" });
 
-    const browser = await chromium.connectOverCDP(entry.config.endpoint);
+    const browser = await chromium.connectOverCDP(entry.config.endpoint, {
+      headers: entry.config.token ? { Authorization: `Bearer ${entry.config.token}` } : undefined,
+    });
     entry.browser = browser;
     entry.browserVersion = browser.version();
     entry.status = "connected";

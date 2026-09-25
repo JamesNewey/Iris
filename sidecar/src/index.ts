@@ -17,7 +17,7 @@ function broadcast(event: SidecarEvent) {
 const manager = new ConnectionManager(broadcast);
 
 const incomingSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("addConnection"), requestId: z.number(), name: z.string(), endpoint: z.string() }),
+  z.object({ type: z.literal("addConnection"), requestId: z.number(), name: z.string(), endpoint: z.string(), token: z.string().optional() }),
   z.object({ type: z.literal("removeConnection"), requestId: z.number(), connectionId: z.string() }),
   z.object({ type: z.literal("listSessions"), requestId: z.number(), connectionId: z.string() }),
   z.object({ type: z.literal("navigate"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), url: z.string() }),
@@ -38,7 +38,7 @@ type IncomingMessage = z.infer<typeof incomingSchema>;
 async function handle(msg: IncomingMessage): Promise<unknown> {
   switch (msg.type) {
     case "addConnection":
-      return manager.addConnection(msg.name, msg.endpoint);
+      return manager.addConnection(msg.name, msg.endpoint, msg.token);
     case "removeConnection":
       await manager.removeConnection(msg.connectionId);
       return {};

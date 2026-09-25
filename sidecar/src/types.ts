@@ -4,6 +4,8 @@ export interface ConnectionConfig {
   id: string;
   name: string;
   endpoint: string;
+  /** Held in memory only for the life of the connection; never persisted here. */
+  token?: string;
 }
 
 export interface SessionSummary {
