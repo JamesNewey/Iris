@@ -1,22 +1,106 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
-let greetInputEl: HTMLInputElement | null;
-let greetMsgEl: HTMLElement | null;
+type SessionSummary = { id: string; url: string; title: string };
+type ConnectResult = { browserVersion: string; sessions: SessionSummary[] };
+type FrameEvent = { type: "frame"; sessionId: string; data: string };
 
-async function greet() {
-  if (greetMsgEl && greetInputEl) {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsgEl.textContent = await invoke("greet", {
-      name: greetInputEl.value,
-    });
+let statusEl: HTMLElement | null;
+let sessionsEl: HTMLElement | null;
+let controlEl: HTMLElement | null;
+let controlSessionIdEl: HTMLElement | null;
+let canvasEl: HTMLCanvasElement | null;
+let latencyEl: HTMLElement | null;
+
+let activeSessionId: string | null = null;
+let naturalWidth = 0;
+let naturalHeight = 0;
+
+function setStatus(text: string) {
+  if (statusEl) statusEl.textContent = text;
+}
+
+function renderSessions(sessions: SessionSummary[]) {
+  if (!sessionsEl) return;
+  sessionsEl.innerHTML = "";
+  for (const s of sessions) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.textContent = `${s.id} — ${s.title || "(untitled)"} — ${s.url} `;
+    const btn = document.createElement("button");
+    btn.textContent = "Take control";
+    btn.addEventListener("click", () => takeControl(s.id));
+    row.appendChild(btn);
+    sessionsEl.appendChild(row);
+  }
+}
+
+async function takeControl(sessionId: string) {
+  activeSessionId = sessionId;
+  if (controlSessionIdEl) controlSessionIdEl.textContent = sessionId;
+  if (controlEl) controlEl.style.display = "block";
+  setStatus(`Starting screencast for ${sessionId}...`);
+  await invoke("start_screencast", { sessionId });
+  setStatus(`Live: ${sessionId}`);
+}
+
+function drawFrame(dataBase64: string) {
+  if (!canvasEl) return;
+  const ctx = canvasEl.getContext("2d");
+  if (!ctx) return;
+  const img = new Image();
+  img.onload = () => {
+    naturalWidth = img.naturalWidth;
+    naturalHeight = img.naturalHeight;
+    ctx.drawImage(img, 0, 0, canvasEl!.width, canvasEl!.height);
+  };
+  img.src = `data:image/jpeg;base64,${dataBase64}`;
+}
+
+async function handleCanvasClick(ev: MouseEvent) {
+  if (!activeSessionId || !canvasEl || !naturalWidth || !naturalHeight) return;
+  const rect = canvasEl.getBoundingClientRect();
+  const cx = ((ev.clientX - rect.left) / rect.width) * naturalWidth;
+  const cy = ((ev.clientY - rect.top) / rect.height) * naturalHeight;
+  const t0 = performance.now();
+  const result = await invoke<{ latencyMs: number }>("send_click", {
+    sessionId: activeSessionId,
+    x: cx,
+    y: cy,
+  });
+  const roundTrip = performance.now() - t0;
+  if (latencyEl) {
+    latencyEl.textContent = `Sidecar-reported click latency: ${result.latencyMs}ms · full round trip: ${roundTrip.toFixed(1)}ms`;
   }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
-  greetInputEl = document.querySelector("#greet-input");
-  greetMsgEl = document.querySelector("#greet-msg");
-  document.querySelector("#greet-form")?.addEventListener("submit", (e) => {
+  statusEl = document.querySelector("#status");
+  sessionsEl = document.querySelector("#sessions");
+  controlEl = document.querySelector("#control");
+  controlSessionIdEl = document.querySelector("#control-session-id");
+  canvasEl = document.querySelector("#screencast");
+  latencyEl = document.querySelector("#latency");
+
+  canvasEl?.addEventListener("click", handleCanvasClick);
+
+  document.querySelector("#connect-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
-    greet();
+    const input = document.querySelector<HTMLInputElement>("#endpoint-input");
+    const endpoint = input?.value ?? "";
+    setStatus(`Connecting to ${endpoint}...`);
+    try {
+      const result = await invoke<ConnectResult>("connect_client", { endpoint });
+      setStatus(`Connected — Chrome ${result.browserVersion}, ${result.sessions.length} session(s)`);
+      renderSessions(result.sessions);
+    } catch (err) {
+      setStatus(`Connect failed: ${err}`);
+    }
+  });
+
+  listen<FrameEvent>("sidecar-frame", (event) => {
+    if (event.payload.sessionId === activeSessionId) {
+      drawFrame(event.payload.data);
+    }
   });
 });
