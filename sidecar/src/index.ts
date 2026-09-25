@@ -29,6 +29,8 @@ const incomingSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("releaseControl"), requestId: z.number(), connectionId: z.string(), sessionId: z.string() }),
   z.object({ type: z.literal("startScreencast"), requestId: z.number(), connectionId: z.string(), sessionId: z.string() }),
   z.object({ type: z.literal("stopScreencast"), requestId: z.number(), connectionId: z.string(), sessionId: z.string() }),
+  z.object({ type: z.literal("startThumbnail"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), intervalMs: z.number().optional() }),
+  z.object({ type: z.literal("stopThumbnail"), requestId: z.number(), connectionId: z.string(), sessionId: z.string() }),
   z.object({ type: z.literal("click"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), x: z.number(), y: z.number() }),
   z.object({ type: z.literal("key"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), text: z.string() }),
 ]);
@@ -70,6 +72,11 @@ async function handle(msg: IncomingMessage): Promise<unknown> {
       return {};
     case "stopScreencast":
       await manager.stopScreencast(msg.connectionId, msg.sessionId);
+      return {};
+    case "startThumbnail":
+      return manager.startThumbnail(msg.connectionId, msg.sessionId, msg.intervalMs);
+    case "stopThumbnail":
+      await manager.stopThumbnail(msg.connectionId, msg.sessionId);
       return {};
     case "click":
       return manager.click(msg.connectionId, msg.sessionId, msg.x, msg.y);

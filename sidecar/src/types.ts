@@ -23,5 +23,6 @@ export type SidecarEvent =
   | { type: "sessionUpdated"; connectionId: string; session: SessionSummary }
   | { type: "sessionRemoved"; connectionId: string; sessionId: string }
   | { type: "frame"; connectionId: string; sessionId: string; data: string }
+  | { type: "thumbnail"; connectionId: string; sessionId: string; data: string }
   | { type: "consoleMessage"; connectionId: string; sessionId: string; level: string; text: string }
   | { type: "pageError"; connectionId: string; sessionId: string; message: string };
