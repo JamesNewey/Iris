@@ -12,29 +12,53 @@
     <div class="app">
       <header class="app-header">
         <h1>Iris</h1>
+        <form id="connect-form" class="add-connection-form">
+          <input id="name-input" placeholder="Connection name" value="Test client" required />
+          <input id="endpoint-input" placeholder="http://127.0.0.1:9225" value="http://127.0.0.1:9225" required />
+          <input id="token-input" placeholder="Auth token (optional)" type="password" />
+          <button type="submit">Add connection</button>
+        </form>
       </header>
 
       <main class="app-body">
         <section class="panel" id="connections-panel">
           <h2>Connections</h2>
 
-          <form id="connect-form" class="add-connection-form">
-            <input id="name-input" placeholder="Connection name" value="Test client" required />
-            <input id="endpoint-input" placeholder="http://127.0.0.1:9225" value="http://127.0.0.1:9225" required />
-            <input id="token-input" placeholder="Auth token (optional)" type="password" />
-            <button type="submit">Add connection</button>
-          </form>
-
           <ul id="connections-list" class="connections-list"></ul>
         </section>
 
-        <section class="panel" id="control-panel" style="display: none">
+        <section class="control-panel" id="control-panel">
           <div class="row">
             <h2>Control: <span id="control-session-id"></span></h2>
             <button id="release-control-btn" type="button">Release control</button>
           </div>
-          <canvas id="screencast" width="1024" height="640"></canvas>
-          <p id="latency" class="muted"></p>
+
+          <div class="control-columns">
+            <div class="control-main">
+              <form id="navigate-form" class="row navigate-form">
+                <input id="url-input" placeholder="https://example.com" />
+                <button type="submit">Go</button>
+              </form>
+              <div class="row command-buttons">
+                <button id="reload-btn" type="button">Reload</button>
+                <button id="back-btn" type="button">Back</button>
+                <button id="forward-btn" type="button">Forward</button>
+                <button id="close-session-btn" type="button">Close session</button>
+              </div>
+              <p id="command-result" class="muted small"></p>
+
+              <canvas id="screencast" width="1024" height="640"></canvas>
+              <p id="latency" class="muted small"></p>
+            </div>
+
+            <div class="control-activity">
+              <div class="row">
+                <h3>Activity</h3>
+              </div>
+              <input id="activity-filter" placeholder="Filter…" class="activity-filter" />
+              <ul id="activity-log" class="activity-log"></ul>
+            </div>
+          </div>
         </section>
       </main>
     </div>
