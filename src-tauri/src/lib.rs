@@ -87,7 +87,19 @@ macro_rules! sidecar_command {
     };
 }
 
-sidecar_command!(add_connection, "addConnection", name: String => "name", endpoint: String => "endpoint");
+#[tauri::command]
+async fn add_connection(
+    state: tauri::State<'_, Arc<SidecarState>>,
+    name: String,
+    endpoint: String,
+    token: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = json!({ "type": "addConnection", "name": name, "endpoint": endpoint });
+    if let Some(t) = token {
+        payload["token"] = json!(t);
+    }
+    send_request(&state, payload).await
+}
 sidecar_command!(remove_connection, "removeConnection", connection_id: String => "connectionId");
 sidecar_command!(list_sessions, "listSessions", connection_id: String => "connectionId");
 sidecar_command!(navigate, "navigate", connection_id: String => "connectionId", session_id: String => "sessionId", url: String => "url");
@@ -250,6 +262,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .manage(state.clone())
         .setup(move |app| {
             spawn_sidecar_supervisor(app.handle(), state.clone());

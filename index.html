@@ -9,24 +9,34 @@
   </head>
 
   <body>
-    <main class="container">
-      <h1>Iris — Phase 2 walking skeleton</h1>
+    <div class="app">
+      <header class="app-header">
+        <h1>Iris</h1>
+      </header>
 
-      <form class="row" id="connect-form">
-        <input id="name-input" placeholder="Connection name" value="Test client" />
-        <input id="endpoint-input" placeholder="http://127.0.0.1:9225" value="http://127.0.0.1:9225" />
-        <button type="submit">Connect</button>
-      </form>
+      <main class="app-body">
+        <section class="panel" id="connections-panel">
+          <h2>Connections</h2>
 
-      <p id="status"></p>
+          <form id="connect-form" class="add-connection-form">
+            <input id="name-input" placeholder="Connection name" value="Test client" required />
+            <input id="endpoint-input" placeholder="http://127.0.0.1:9225" value="http://127.0.0.1:9225" required />
+            <input id="token-input" placeholder="Auth token (optional)" type="password" />
+            <button type="submit">Add connection</button>
+          </form>
 
-      <div id="sessions"></div>
+          <ul id="connections-list" class="connections-list"></ul>
+        </section>
 
-      <div id="control" style="display: none">
-        <h2>Control: <span id="control-session-id"></span></h2>
-        <canvas id="screencast" width="1024" height="640" style="border: 1px solid #888; cursor: crosshair"></canvas>
-        <p id="latency"></p>
-      </div>
-    </main>
+        <section class="panel" id="control-panel" style="display: none">
+          <div class="row">
+            <h2>Control: <span id="control-session-id"></span></h2>
+            <button id="release-control-btn" type="button">Release control</button>
+          </div>
+          <canvas id="screencast" width="1024" height="640"></canvas>
+          <p id="latency" class="muted"></p>
+        </section>
+      </main>
+    </div>
   </body>
 </html>
