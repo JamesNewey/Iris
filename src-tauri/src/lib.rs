@@ -112,7 +112,7 @@ sidecar_command!(release_control, "releaseControl", connection_id: String => "co
 sidecar_command!(start_screencast, "startScreencast", connection_id: String => "connectionId", session_id: String => "sessionId");
 sidecar_command!(stop_screencast, "stopScreencast", connection_id: String => "connectionId", session_id: String => "sessionId");
 sidecar_command!(stop_thumbnail, "stopThumbnail", connection_id: String => "connectionId", session_id: String => "sessionId");
-sidecar_command!(send_key, "key", connection_id: String => "connectionId", session_id: String => "sessionId", text: String => "text");
+sidecar_command!(send_key, "key", connection_id: String => "connectionId", session_id: String => "sessionId", key: String => "key", code: String => "code");
 
 #[tauri::command]
 async fn start_thumbnail(

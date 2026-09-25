@@ -496,6 +496,17 @@ async function handleCanvasClick(ev: MouseEvent) {
   }
 }
 
+async function handleCanvasKeydown(ev: KeyboardEvent) {
+  if (!activeConnectionId || !activeSessionId) return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return; // let modifier combos (copy/paste, devtools, etc.) pass through untouched
+  ev.preventDefault();
+  try {
+    await invoke("send_key", { connectionId: activeConnectionId, sessionId: activeSessionId, key: ev.key, code: ev.code });
+  } catch (err) {
+    showCommandResult(`Key send failed: ${err}`, true);
+  }
+}
+
 function handleSidecarEvent(event: SidecarPushEvent) {
   if (event.type === "connectionStatus") {
     const conn = findConnectionByLiveId(event.connectionId as string);
@@ -547,6 +558,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   commandResultEl = document.querySelector("#command-result");
 
   canvasEl?.addEventListener("click", handleCanvasClick);
+  canvasEl?.addEventListener("keydown", handleCanvasKeydown);
   document.querySelector("#release-control-btn")?.addEventListener("click", async () => {
     await releaseActiveControl();
     clearCanvas();

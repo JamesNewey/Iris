@@ -264,6 +264,11 @@ button:hover {
   max-width: 100%;
 }
 
+#screencast:focus {
+  outline: 2px solid #396cd8;
+  outline-offset: 2px;
+}
+
 .control-panel {
   display: flex;
   flex-direction: column;

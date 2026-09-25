@@ -32,7 +32,7 @@ const incomingSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("startThumbnail"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), intervalMs: z.number().optional() }),
   z.object({ type: z.literal("stopThumbnail"), requestId: z.number(), connectionId: z.string(), sessionId: z.string() }),
   z.object({ type: z.literal("click"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), x: z.number(), y: z.number() }),
-  z.object({ type: z.literal("key"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), text: z.string() }),
+  z.object({ type: z.literal("key"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), key: z.string(), code: z.string() }),
 ]);
 
 type IncomingMessage = z.infer<typeof incomingSchema>;
@@ -81,7 +81,7 @@ async function handle(msg: IncomingMessage): Promise<unknown> {
     case "click":
       return manager.click(msg.connectionId, msg.sessionId, msg.x, msg.y);
     case "key":
-      await manager.key(msg.connectionId, msg.sessionId, msg.text);
+      await manager.key(msg.connectionId, msg.sessionId, msg.key, msg.code);
       return {};
   }
 }
