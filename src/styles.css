@@ -29,6 +29,10 @@ body {
 }
 
 .app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1em;
   padding: 0.75em 1.25em;
   border-bottom: 1px solid #ddd;
 }
@@ -36,15 +40,16 @@ body {
 .app-header h1 {
   margin: 0;
   font-size: 1.1em;
+  white-space: nowrap;
 }
 
 .app-body {
   flex: 1;
-  display: grid;
-  grid-template-columns: 380px 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 1em;
   padding: 1em;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .panel {
@@ -72,9 +77,15 @@ body {
 
 .add-connection-form {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   gap: 0.5em;
-  margin-bottom: 1em;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.add-connection-form input {
+  width: 150px;
 }
 
 input,
@@ -99,69 +110,105 @@ button:hover {
   background: #f0f4ff;
 }
 
-.connections-list,
-.sessions-list {
+.connections-list {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
 .connection-item {
+  width: 100%;
   border: 1px solid #e5e5e5;
   border-radius: 6px;
   padding: 0.6em 0.75em;
   margin-bottom: 0.6em;
 }
 
-.connection-header {
+.connection-titlebar {
   display: flex;
   align-items: center;
-  gap: 0.5em;
-  margin-bottom: 0.3em;
+  gap: 0.6em;
+  flex-wrap: wrap;
 }
 
 .connection-name {
   cursor: pointer;
+  font-size: 1.05em;
 }
 
 .connection-name:hover {
   text-decoration: underline;
 }
 
-.sessions-list {
-  margin-top: 0.5em;
-  padding-top: 0.5em;
+.connection-endpoint {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.connection-actions {
+  display: flex;
+  gap: 0.5em;
+}
+
+.sessions-row {
+  list-style: none;
+  margin: 0.6em 0 0 0;
+  padding-top: 0.6em;
   border-top: 1px dashed #e0e0e0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75em;
 }
 
-.sessions-list li {
-  padding: 0.3em 0;
+.sessions-empty {
+  margin-top: 0.5em;
 }
 
-.session-row {
-  align-items: center;
+.session-card {
+  width: 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
 }
 
 .session-label {
-  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9em;
+}
+
+.session-url {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .thumb {
-  width: 64px;
-  height: 40px;
+  width: 100%;
+  height: 106px;
   object-fit: cover;
   background: #ddd;
   border-radius: 4px;
   border: 1px solid #ccc;
-  flex-shrink: 0;
+  cursor: pointer;
 }
 
-.session-active {
+.thumb:hover {
+  border-color: #396cd8;
+}
+
+.session-active .session-label {
   font-weight: 600;
   color: #146c2e;
+}
+
+.session-active .thumb {
+  border-color: #146c2e;
+  border-width: 2px;
 }
 
 .muted {
@@ -217,6 +264,93 @@ button:hover {
   max-width: 100%;
 }
 
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-top: 0.75em;
+  padding-top: 0.75em;
+  border-top: 1px solid #e0e0e0;
+}
+
+.control-columns {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 1em;
+}
+
+.control-main {
+  overflow-y: auto;
+}
+
+.navigate-form {
+  margin-bottom: 0.5em;
+}
+
+.navigate-form input {
+  flex: 1;
+}
+
+.command-buttons {
+  justify-content: flex-start;
+  margin-bottom: 0.5em;
+}
+
+.control-activity {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #e0e0e0;
+  padding-left: 1em;
+  overflow: hidden;
+}
+
+.control-activity h3 {
+  margin: 0 0 0.5em 0;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #666;
+}
+
+.activity-filter {
+  margin-bottom: 0.5em;
+}
+
+.activity-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.78em;
+}
+
+.activity-log li {
+  padding: 0.25em 0;
+  border-bottom: 1px solid #eee;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.activity-log .entry-time {
+  color: #888;
+  margin-right: 0.4em;
+}
+
+.activity-log .entry-navigation {
+  color: #396cd8;
+}
+
+.activity-log .entry-console-error,
+.activity-log .entry-pageerror {
+  color: #a12622;
+}
+
+.activity-log .entry-console-warning {
+  color: #8a6d00;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     color: #f0f0f0;
@@ -247,7 +381,19 @@ button:hover {
     border-color: #3a3a3a;
   }
 
-  .sessions-list {
+  .sessions-row {
     border-top-color: #3a3a3a;
+  }
+
+  .control-panel {
+    border-top-color: #3a3a3a;
+  }
+
+  .control-activity {
+    border-left-color: #3a3a3a;
+  }
+
+  .activity-log li {
+    border-bottom-color: #333;
   }
 }

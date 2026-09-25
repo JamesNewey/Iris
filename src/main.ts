@@ -11,7 +11,17 @@ type SidecarPushEvent =
   | { type: "connectionStatus"; connectionId: string; status: ConnectionStatus; error?: string }
   | { type: "sessionAdded" | "sessionUpdated"; connectionId: string; session: SessionSummary }
   | { type: "sessionRemoved"; connectionId: string; sessionId: string }
-  | { type: string; [key: string]: unknown };
+  | { type: "consoleMessage"; connectionId: string; sessionId: string; level: string; text: string }
+  | { type: "pageError"; connectionId: string; sessionId: string; message: string }
+  | { type: "sidecarCrashed" | "sidecarRestarting"; [key: string]: unknown };
+
+type ActivityKind = "navigation" | "console" | "pageerror";
+interface ActivityEntry {
+  timestamp: number;
+  kind: ActivityKind;
+  level?: string;
+  text: string;
+}
 
 interface StoredConfig {
   configId: string;
@@ -35,6 +45,8 @@ interface Connection {
 
 const connections = new Map<string, Connection>(); // keyed by configId
 const thumbnails = new Map<string, string>(); // sessionId -> base64 jpeg
+const activityLogs = new Map<string, ActivityEntry[]>(); // sessionId -> capped entries
+const MAX_ACTIVITY_ENTRIES = 200;
 let store: Store | null = null;
 
 let connectionsListEl: HTMLElement | null;
@@ -42,11 +54,15 @@ let controlPanelEl: HTMLElement | null;
 let controlSessionIdEl: HTMLElement | null;
 let canvasEl: HTMLCanvasElement | null;
 let latencyEl: HTMLElement | null;
+let activityLogEl: HTMLElement | null;
+let activityFilterEl: HTMLInputElement | null;
+let commandResultEl: HTMLElement | null;
 
 let activeConnectionId: string | null = null;
 let activeSessionId: string | null = null;
 let naturalWidth = 0;
 let naturalHeight = 0;
+let lastFrameData: string | null = null;
 
 const STATUS_LABEL: Record<Connection["status"], string> = {
   idle: "Not connected",
@@ -61,45 +77,72 @@ function statusClass(status: Connection["status"]): string {
   return `status status-${status}`;
 }
 
+// Runs every second to keep the "up Ns" readout live. Deliberately updates
+// just the one text node per connection rather than calling render() — a
+// full rebuild detaches/reattaches the control panel's <canvas>, which
+// resets its bitmap in this webview and made the live view flash blank.
+function updateUptimes() {
+  for (const conn of connections.values()) {
+    if (!conn.connectedAt || conn.status !== "connected") continue;
+    const metaEl = document.getElementById(`meta-${conn.configId}`);
+    if (!metaEl) continue;
+    const bits: string[] = [];
+    if (conn.browserVersion) bits.push(`Chrome ${conn.browserVersion}`);
+    bits.push(`up ${Math.floor((Date.now() - conn.connectedAt) / 1000)}s`);
+    if (conn.error) bits.push(`error: ${conn.error}`);
+    metaEl.textContent = bits.join(" · ");
+  }
+}
+
 function render() {
   if (!connectionsListEl) return;
+  controlPanelEl?.remove(); // detach; re-attached below only if a session is actually under control
   connectionsListEl.innerHTML = "";
 
   for (const conn of connections.values()) {
     const li = document.createElement("li");
     li.className = "connection-item";
 
-    const header = document.createElement("div");
-    header.className = "connection-header";
+    const titlebar = document.createElement("div");
+    titlebar.className = "connection-titlebar";
 
     const badge = document.createElement("span");
     badge.className = statusClass(conn.status);
     badge.textContent = STATUS_LABEL[conn.status];
+    titlebar.appendChild(badge);
 
     const nameEl = document.createElement("strong");
     nameEl.textContent = conn.name;
     nameEl.title = "Click to rename";
     nameEl.className = "connection-name";
     nameEl.addEventListener("click", () => renameConnection(conn.configId));
+    titlebar.appendChild(nameEl);
 
-    header.appendChild(badge);
-    header.appendChild(nameEl);
-    li.appendChild(header);
+    const endpointEl = document.createElement("span");
+    endpointEl.className = "connection-endpoint muted small";
+    endpointEl.textContent = conn.endpoint;
+    titlebar.appendChild(endpointEl);
 
-    const meta = document.createElement("div");
-    meta.className = "muted small";
-    const bits = [conn.endpoint];
-    if (conn.browserVersion) bits.push(`Chrome ${conn.browserVersion}`);
+    const metaBits: string[] = [];
+    if (conn.browserVersion) metaBits.push(`Chrome ${conn.browserVersion}`);
     if (conn.connectedAt && conn.status === "connected") {
-      const secs = Math.floor((Date.now() - conn.connectedAt) / 1000);
-      bits.push(`up ${secs}s`);
+      metaBits.push(`up ${Math.floor((Date.now() - conn.connectedAt) / 1000)}s`);
     }
-    if (conn.error) bits.push(`error: ${conn.error}`);
-    meta.textContent = bits.join(" · ");
-    li.appendChild(meta);
+    if (conn.error) metaBits.push(`error: ${conn.error}`);
+    if (metaBits.length > 0) {
+      const metaEl = document.createElement("span");
+      metaEl.id = `meta-${conn.configId}`;
+      metaEl.className = "connection-meta muted small";
+      metaEl.textContent = metaBits.join(" · ");
+      titlebar.appendChild(metaEl);
+    }
+
+    const spacer = document.createElement("span");
+    spacer.className = "spacer";
+    titlebar.appendChild(spacer);
 
     const actions = document.createElement("div");
-    actions.className = "row";
+    actions.className = "connection-actions";
     const isLive = conn.connectionId !== null;
 
     const toggleBtn = document.createElement("button");
@@ -111,37 +154,49 @@ function render() {
     removeBtn.textContent = "Remove";
     removeBtn.addEventListener("click", () => removeConnection(conn.configId));
     actions.appendChild(removeBtn);
-    li.appendChild(actions);
+    titlebar.appendChild(actions);
+
+    li.appendChild(titlebar);
 
     if (conn.sessions.size > 0) {
-      const sessionsList = document.createElement("ul");
-      sessionsList.className = "sessions-list";
+      const sessionsRow = document.createElement("ul");
+      sessionsRow.className = "sessions-row";
       for (const s of conn.sessions.values()) {
         const isActive = conn.connectionId === activeConnectionId && s.id === activeSessionId;
         const sLi = document.createElement("li");
-        sLi.className = "row session-row";
+        sLi.className = "session-card";
         if (isActive) sLi.classList.add("session-active");
 
         const thumb = document.createElement("img");
         thumb.className = "thumb";
         thumb.id = `thumb-${s.id}`;
+        thumb.title = s.url;
         const cached = thumbnails.get(s.id);
         if (cached) thumb.src = `data:image/jpeg;base64,${cached}`;
+        thumb.addEventListener("click", () => takeControl(conn.connectionId!, s.id));
         sLi.appendChild(thumb);
 
-        const label = document.createElement("span");
+        const label = document.createElement("div");
         label.className = "session-label";
-        label.textContent = `${isActive ? "● " : ""}${s.title || "(untitled)"} — ${s.url}`;
+        label.textContent = `${isActive ? "● " : ""}${s.title || "(untitled)"}`;
         sLi.appendChild(label);
 
-        const controlBtn = document.createElement("button");
-        controlBtn.textContent = isActive ? "Controlling" : "Take control";
-        controlBtn.disabled = isActive;
-        controlBtn.addEventListener("click", () => takeControl(conn.connectionId!, s.id));
-        sLi.appendChild(controlBtn);
-        sessionsList.appendChild(sLi);
+        sessionsRow.appendChild(sLi);
       }
-      li.appendChild(sessionsList);
+      li.appendChild(sessionsRow);
+
+      if (conn.connectionId === activeConnectionId && activeSessionId && conn.sessions.has(activeSessionId) && controlPanelEl) {
+        li.appendChild(controlPanelEl); // move the persistent control view in-flow, right after this connection's sessions
+        // Reparenting a <canvas> clears its bitmap in this webview; repaint
+        // the last frame immediately (same tick, before the browser paints)
+        // so it never visibly flashes blank.
+        if (lastFrameData) drawFrame(lastFrameData);
+      }
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "muted small sessions-empty";
+      empty.textContent = "No sessions";
+      li.appendChild(empty);
     }
 
     connectionsListEl.appendChild(li);
@@ -198,6 +253,11 @@ async function disconnectConnection(configId: string) {
   } catch {
     // best effort; fall through and mark disconnected locally regardless
   }
+  if (conn.connectionId === activeConnectionId) {
+    activeConnectionId = null;
+    activeSessionId = null;
+    clearCanvas();
+  }
   conn.connectionId = null;
   conn.status = "disconnected";
   conn.sessions.clear();
@@ -213,6 +273,11 @@ async function removeConnection(configId: string) {
     } catch {
       // ignore; we're deleting the config regardless
     }
+  }
+  if (conn.connectionId === activeConnectionId) {
+    activeConnectionId = null;
+    activeSessionId = null;
+    clearCanvas();
   }
   connections.delete(configId);
   if (store) {
@@ -255,9 +320,66 @@ async function stopThumbnailFor(connectionId: string, sessionId: string) {
   }
 }
 
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour12: false });
+}
+
+function activityEntryClass(entry: ActivityEntry): string {
+  if (entry.kind === "navigation") return "entry-navigation";
+  if (entry.kind === "pageerror") return "entry-pageerror";
+  if (entry.level === "error") return "entry-console-error";
+  if (entry.level === "warning") return "entry-console-warning";
+  return "";
+}
+
+function activityEntryText(entry: ActivityEntry): string {
+  const prefix = entry.kind === "navigation" ? "→" : entry.kind === "pageerror" ? "✕" : entry.level === "error" ? "✕" : "·";
+  return `${prefix} ${entry.text}`;
+}
+
+function appendActivityLi(entry: ActivityEntry) {
+  if (!activityLogEl) return;
+  const filter = activityFilterEl?.value.trim().toLowerCase() ?? "";
+  if (filter && !entry.text.toLowerCase().includes(filter)) return;
+
+  const li = document.createElement("li");
+  const cls = activityEntryClass(entry);
+  if (cls) li.className = cls;
+  const time = document.createElement("span");
+  time.className = "entry-time";
+  time.textContent = formatTime(entry.timestamp);
+  li.appendChild(time);
+  li.appendChild(document.createTextNode(activityEntryText(entry)));
+  activityLogEl.appendChild(li);
+  activityLogEl.scrollTop = activityLogEl.scrollHeight;
+}
+
+function logActivity(sessionId: string, kind: ActivityKind, text: string, level?: string) {
+  const entry: ActivityEntry = { timestamp: Date.now(), kind, text, level };
+  let list = activityLogs.get(sessionId);
+  if (!list) {
+    list = [];
+    activityLogs.set(sessionId, list);
+  }
+  list.push(entry);
+  if (list.length > MAX_ACTIVITY_ENTRIES) list.shift();
+
+  if (sessionId === activeSessionId) appendActivityLi(entry);
+}
+
+function renderActivityLog() {
+  if (!activityLogEl) return;
+  activityLogEl.innerHTML = "";
+  if (!activeSessionId) return;
+  for (const entry of activityLogs.get(activeSessionId) ?? []) {
+    appendActivityLi(entry);
+  }
+}
+
 function clearCanvas() {
   naturalWidth = 0;
   naturalHeight = 0;
+  lastFrameData = null;
   if (!canvasEl) return;
   const ctx = canvasEl.getContext("2d");
   ctx?.clearRect(0, 0, canvasEl.width, canvasEl.height);
@@ -290,15 +412,21 @@ async function takeControl(connectionId: string, sessionId: string) {
   const conn = findConnectionByLiveId(connectionId);
   const session = conn?.sessions.get(sessionId);
   if (controlSessionIdEl) controlSessionIdEl.textContent = session ? session.title || session.url : sessionId;
-  if (controlPanelEl) controlPanelEl.style.display = "block";
   if (latencyEl) latencyEl.textContent = "";
+  if (commandResultEl) commandResultEl.textContent = "";
+  const urlInput = document.querySelector<HTMLInputElement>("#url-input");
+  if (urlInput) urlInput.value = session?.url ?? "";
+  if (activityFilterEl) activityFilterEl.value = "";
+  renderActivityLog();
 
   await invoke("take_control", { connectionId, sessionId });
   await invoke("start_screencast", { connectionId, sessionId });
   render(); // reflect the new "controlling" state in the sessions list
+  controlPanelEl?.scrollIntoView({ block: "start", behavior: "instant" });
 }
 
 function drawFrame(dataBase64: string) {
+  lastFrameData = dataBase64;
   if (!canvasEl) return;
   const ctx = canvasEl.getContext("2d");
   if (!ctx) return;
@@ -309,6 +437,45 @@ function drawFrame(dataBase64: string) {
     ctx.drawImage(img, 0, 0, canvasEl!.width, canvasEl!.height);
   };
   img.src = `data:image/jpeg;base64,${dataBase64}`;
+}
+
+function showCommandResult(text: string, isError = false) {
+  if (!commandResultEl) return;
+  commandResultEl.textContent = text;
+  commandResultEl.style.color = isError ? "#a12622" : "";
+}
+
+async function runSessionCommand(tauriCommand: string, label: string, extra: Record<string, unknown> = {}) {
+  if (!activeConnectionId || !activeSessionId) return;
+  showCommandResult(`${label}…`);
+  try {
+    await invoke(tauriCommand, { connectionId: activeConnectionId, sessionId: activeSessionId, ...extra });
+    showCommandResult(`${label}: success`);
+  } catch (err) {
+    showCommandResult(`${label} failed: ${err}`, true);
+  }
+}
+
+async function handleNavigateSubmit(ev: SubmitEvent) {
+  ev.preventDefault();
+  const input = document.querySelector<HTMLInputElement>("#url-input");
+  const raw = input?.value.trim() ?? "";
+  if (!raw) return;
+  let url = raw;
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  try {
+    new URL(url);
+  } catch {
+    showCommandResult(`Invalid URL: ${raw}`, true);
+    return;
+  }
+  await runSessionCommand("navigate", "Navigate", { url });
+}
+
+async function handleCloseSession() {
+  if (!activeConnectionId || !activeSessionId) return;
+  if (!confirm("Close this session's page? This cannot be undone.")) return;
+  await runSessionCommand("close_session", "Close session");
 }
 
 async function handleCanvasClick(ev: MouseEvent) {
@@ -340,21 +507,29 @@ function handleSidecarEvent(event: SidecarPushEvent) {
     const conn = findConnectionByLiveId(event.connectionId as string);
     if (!conn) return;
     const session = event.session as SessionSummary;
-    const isNew = !conn.sessions.has(session.id);
+    const previous = conn.sessions.get(session.id);
+    const isNew = !previous;
     conn.sessions.set(session.id, session);
     if (isNew && !(conn.connectionId === activeConnectionId && session.id === activeSessionId)) {
       void startThumbnailFor(event.connectionId as string, session.id);
     }
+    if (!isNew && previous.url !== session.url) {
+      logActivity(session.id, "navigation", `navigated to ${session.url}`);
+    }
     render();
+  } else if (event.type === "consoleMessage") {
+    logActivity(event.sessionId, "console", event.text, event.level);
+  } else if (event.type === "pageError") {
+    logActivity(event.sessionId, "pageerror", event.message);
   } else if (event.type === "sessionRemoved") {
     const conn = findConnectionByLiveId(event.connectionId as string);
     if (!conn) return;
     conn.sessions.delete(event.sessionId as string);
     thumbnails.delete(event.sessionId as string);
+    activityLogs.delete(event.sessionId as string);
     if (event.sessionId === activeSessionId && conn.connectionId === activeConnectionId) {
       activeConnectionId = null;
       activeSessionId = null;
-      if (controlPanelEl) controlPanelEl.style.display = "none";
       clearCanvas();
     }
     render();
@@ -367,14 +542,23 @@ window.addEventListener("DOMContentLoaded", async () => {
   controlSessionIdEl = document.querySelector("#control-session-id");
   canvasEl = document.querySelector("#screencast");
   latencyEl = document.querySelector("#latency");
+  activityLogEl = document.querySelector("#activity-log");
+  activityFilterEl = document.querySelector("#activity-filter");
+  commandResultEl = document.querySelector("#command-result");
 
   canvasEl?.addEventListener("click", handleCanvasClick);
   document.querySelector("#release-control-btn")?.addEventListener("click", async () => {
     await releaseActiveControl();
-    if (controlPanelEl) controlPanelEl.style.display = "none";
     clearCanvas();
     render();
   });
+
+  document.querySelector<HTMLFormElement>("#navigate-form")?.addEventListener("submit", handleNavigateSubmit);
+  document.querySelector("#reload-btn")?.addEventListener("click", () => runSessionCommand("reload_session", "Reload"));
+  document.querySelector("#back-btn")?.addEventListener("click", () => runSessionCommand("go_back", "Back"));
+  document.querySelector("#forward-btn")?.addEventListener("click", () => runSessionCommand("go_forward", "Forward"));
+  document.querySelector("#close-session-btn")?.addEventListener("click", handleCloseSession);
+  activityFilterEl?.addEventListener("input", renderActivityLog);
 
   store = await load("connections.json", { autoSave: false });
   const entries = await store.entries<StoredConfig>();
@@ -425,5 +609,5 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (img) img.src = `data:image/jpeg;base64,${data}`; // update in place, skip a full render()
   });
 
-  setInterval(render, 1000); // keep the "up Ns" uptime readout live
+  setInterval(updateUptimes, 1000);
 });
