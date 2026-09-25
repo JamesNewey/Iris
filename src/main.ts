@@ -27,7 +27,6 @@ interface StoredConfig {
   configId: string;
   name: string;
   endpoint: string;
-  token?: string;
 }
 
 interface Connection {
@@ -123,6 +122,14 @@ function render() {
     endpointEl.textContent = conn.endpoint;
     titlebar.appendChild(endpointEl);
 
+    if (conn.endpoint.startsWith("http://")) {
+      const insecureEl = document.createElement("span");
+      insecureEl.className = "insecure-badge";
+      insecureEl.textContent = "insecure";
+      insecureEl.title = "This connection uses plain HTTP — traffic is not encrypted";
+      titlebar.appendChild(insecureEl);
+    }
+
     const metaBits: string[] = [];
     if (conn.browserVersion) metaBits.push(`Chrome ${conn.browserVersion}`);
     if (conn.connectedAt && conn.status === "connected") {
@@ -207,10 +214,24 @@ async function persist() {
   if (!store) return;
   await store.clear();
   for (const conn of connections.values()) {
-    const entry: StoredConfig = { configId: conn.configId, name: conn.name, endpoint: conn.endpoint, token: conn.token };
+    // Only name/endpoint go in the plaintext JSON store; the auth token (if
+    // any) lives in the OS keychain, keyed by configId — see persistToken().
+    const entry: StoredConfig = { configId: conn.configId, name: conn.name, endpoint: conn.endpoint };
     await store.set(conn.configId, entry);
   }
   await store.save();
+}
+
+async function persistToken(configId: string, token: string | undefined) {
+  try {
+    if (token) {
+      await invoke("store_token", { configId, token });
+    } else {
+      await invoke("delete_token", { configId });
+    }
+  } catch (err) {
+    console.error("Failed to persist token in OS keychain:", err);
+  }
 }
 
 async function connectConfig(conn: Connection) {
@@ -284,6 +305,7 @@ async function removeConnection(configId: string) {
     await store.delete(configId);
     await store.save();
   }
+  await persistToken(configId, undefined); // remove any stored auth token too
   render();
 }
 
@@ -575,12 +597,18 @@ window.addEventListener("DOMContentLoaded", async () => {
   store = await load("connections.json", { autoSave: false });
   const entries = await store.entries<StoredConfig>();
   for (const [, cfg] of entries) {
+    let token: string | undefined;
+    try {
+      token = (await invoke<string | null>("get_token", { configId: cfg.configId })) ?? undefined;
+    } catch (err) {
+      console.error("Failed to read token from OS keychain:", err);
+    }
     connections.set(cfg.configId, {
       configId: cfg.configId,
       connectionId: null,
       name: cfg.name,
       endpoint: cfg.endpoint,
-      token: cfg.token,
+      token,
       status: "idle",
       sessions: new Map(),
     });
@@ -599,10 +627,19 @@ window.addEventListener("DOMContentLoaded", async () => {
     const endpoint = endpointInput?.value ?? "";
     const token = tokenInput?.value || undefined;
 
+    if (endpoint.startsWith("http://")) {
+      const proceed = confirm(
+        "This endpoint isn't using HTTPS — traffic to it (including any auth token) travels in plaintext. Continue anyway?"
+      );
+      if (!proceed) return;
+    }
+
     const configId = crypto.randomUUID();
     const conn: Connection = { configId, connectionId: null, name, endpoint, token, status: "idle", sessions: new Map() };
     connections.set(configId, conn);
     await persist();
+    await persistToken(configId, token);
+    if (tokenInput) tokenInput.value = "";
     await connectConfig(conn);
   });
 
