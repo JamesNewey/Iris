@@ -142,6 +142,40 @@ async fn send_click(
     .await
 }
 
+// Auth tokens live in the OS keychain, keyed by the frontend's persisted
+// configId — never in the plaintext connection-config store, and never held
+// by the sidecar longer than the life of a single connect call.
+const TOKEN_SERVICE: &str = "iris-connection-token";
+
+fn token_entry(config_id: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(TOKEN_SERVICE, config_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn store_token(config_id: String, token: String) -> Result<(), String> {
+    token_entry(&config_id)?
+        .set_password(&token)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_token(config_id: String) -> Result<Option<String>, String> {
+    match token_entry(&config_id)?.get_password() {
+        Ok(password) => Ok(Some(password)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[tauri::command]
+fn delete_token(config_id: String) -> Result<(), String> {
+    match token_entry(&config_id)?.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 enum ConnectOutcome {
     Connected(WebSocketStream<MaybeTlsStream<TcpStream>>),
     ProcessExited(String),
@@ -303,6 +337,9 @@ pub fn run() {
             stop_thumbnail,
             send_click,
             send_key,
+            store_token,
+            get_token,
+            delete_token,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

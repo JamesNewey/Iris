@@ -258,6 +258,17 @@ button:hover {
   background: #fbdada;
 }
 
+.insecure-badge {
+  display: inline-block;
+  padding: 0.1em 0.5em;
+  border-radius: 4px;
+  font-size: 0.75em;
+  font-weight: 600;
+  color: #8a6d00;
+  background: #fff3cd;
+  border: 1px solid #f0d68a;
+}
+
 #screencast {
   border: 1px solid #888;
   cursor: crosshair;
