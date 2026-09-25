@@ -111,7 +111,21 @@ sidecar_command!(take_control, "takeControl", connection_id: String => "connecti
 sidecar_command!(release_control, "releaseControl", connection_id: String => "connectionId", session_id: String => "sessionId");
 sidecar_command!(start_screencast, "startScreencast", connection_id: String => "connectionId", session_id: String => "sessionId");
 sidecar_command!(stop_screencast, "stopScreencast", connection_id: String => "connectionId", session_id: String => "sessionId");
+sidecar_command!(stop_thumbnail, "stopThumbnail", connection_id: String => "connectionId", session_id: String => "sessionId");
 sidecar_command!(send_key, "key", connection_id: String => "connectionId", session_id: String => "sessionId", text: String => "text");
+
+#[tauri::command]
+async fn start_thumbnail(
+    state: tauri::State<'_, Arc<SidecarState>>,
+    connection_id: String,
+    session_id: String,
+) -> Result<Value, String> {
+    send_request(
+        &state,
+        json!({ "type": "startThumbnail", "connectionId": connection_id, "sessionId": session_id }),
+    )
+    .await
+}
 
 #[tauri::command]
 async fn send_click(
@@ -208,6 +222,10 @@ async fn run_sidecar_once(app: &AppHandle, state: &Arc<SidecarState>) -> Result<
             let _ = app.emit("sidecar-frame", &value);
             continue;
         }
+        if msg_type == "thumbnail" {
+            let _ = app.emit("sidecar-thumbnail", &value);
+            continue;
+        }
 
         if let Some(request_id) = value.get("requestId").and_then(|v| v.as_u64()) {
             if let Some(tx) = state.pending.lock().await.remove(&request_id) {
@@ -281,6 +299,8 @@ pub fn run() {
             release_control,
             start_screencast,
             stop_screencast,
+            start_thumbnail,
+            stop_thumbnail,
             send_click,
             send_key,
         ])

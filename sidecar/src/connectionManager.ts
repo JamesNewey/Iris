@@ -5,6 +5,8 @@ import type { ConnectionConfig, ConnectionStatus, SessionSummary, SidecarEvent }
 
 const BASE_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 15_000;
+const DEFAULT_THUMBNAIL_INTERVAL_MS = 3000;
+const MAX_CONCURRENT_THUMBNAILS = 12;
 
 interface SessionEntry {
   id: string;
@@ -14,6 +16,7 @@ interface SessionEntry {
   underControl: boolean;
   headless: boolean;
   createdAt: number;
+  thumbnailTimer: NodeJS.Timeout | null;
 }
 
 interface ConnectionEntry {
@@ -40,6 +43,7 @@ function toSummary(entry: SessionEntry): SessionSummary {
 
 export class ConnectionManager {
   private connections = new Map<string, ConnectionEntry>();
+  private activeThumbnailCount = 0;
 
   constructor(private emit: (event: SidecarEvent) => void) {}
 
@@ -66,6 +70,9 @@ export class ConnectionManager {
     const entry = this.getEntry(connectionId);
     entry.closed = true;
     if (entry.reconnectTimer) clearTimeout(entry.reconnectTimer);
+    for (const session of entry.sessions.values()) {
+      this.clearThumbnailTimer(session);
+    }
     if (entry.browser) {
       try {
         await entry.browser.close();
@@ -139,6 +146,30 @@ export class ConnectionManager {
     await stopScreencast(session.cdp);
   }
 
+  async startThumbnail(connectionId: string, sessionId: string, intervalMs = DEFAULT_THUMBNAIL_INTERVAL_MS): Promise<{ started: boolean }> {
+    const { session } = this.getSession(connectionId, sessionId);
+    if (session.thumbnailTimer) return { started: true };
+    if (this.activeThumbnailCount >= MAX_CONCURRENT_THUMBNAILS) return { started: false };
+
+    this.activeThumbnailCount += 1;
+    const capture = async () => {
+      try {
+        const buf = await session.page.screenshot({ type: "jpeg", quality: 40, timeout: intervalMs });
+        this.emit({ type: "thumbnail", connectionId, sessionId, data: buf.toString("base64") });
+      } catch {
+        // page may be navigating or closed between ticks; skip this frame
+      }
+    };
+    void capture();
+    session.thumbnailTimer = setInterval(capture, intervalMs);
+    return { started: true };
+  }
+
+  async stopThumbnail(connectionId: string, sessionId: string): Promise<void> {
+    const { session } = this.getSession(connectionId, sessionId);
+    this.clearThumbnailTimer(session);
+  }
+
   async click(connectionId: string, sessionId: string, x: number, y: number): Promise<{ latencyMs: number }> {
     const { session } = this.getSession(connectionId, sessionId);
     const cdp = await ensureCdpSession(session.page, session);
@@ -166,6 +197,13 @@ export class ConnectionManager {
     const session = entry.sessions.get(sessionId);
     if (!session) throw new Error(`Unknown session ${sessionId} on connection ${connectionId}`);
     return { entry, session };
+  }
+
+  private clearThumbnailTimer(session: SessionEntry): void {
+    if (!session.thumbnailTimer) return;
+    clearInterval(session.thumbnailTimer);
+    session.thumbnailTimer = null;
+    this.activeThumbnailCount = Math.max(0, this.activeThumbnailCount - 1);
   }
 
   private async summarizeWithTitle(session: SessionEntry): Promise<SessionSummary> {
@@ -211,6 +249,7 @@ export class ConnectionManager {
       underControl: false,
       headless: false, // CDP-attached pages don't expose this reliably; default false until a better signal exists
       createdAt: Date.now(),
+      thumbnailTimer: null,
     };
     entry.sessions.set(id, session);
 
@@ -230,6 +269,7 @@ export class ConnectionManager {
       this.emit({ type: "pageError", connectionId: entry.config.id, sessionId: id, message: err.message });
     });
     page.on("close", () => {
+      this.clearThumbnailTimer(session);
       entry.sessions.delete(id);
       this.emit({ type: "sessionRemoved", connectionId: entry.config.id, sessionId: id });
     });
@@ -243,7 +283,8 @@ export class ConnectionManager {
     if (entry.closed) return; // deliberate removeConnection, not a drop
 
     entry.browser = null;
-    for (const id of entry.sessions.keys()) {
+    for (const [id, session] of entry.sessions) {
+      this.clearThumbnailTimer(session);
       this.emit({ type: "sessionRemoved", connectionId: entry.config.id, sessionId: id });
     }
     entry.sessions.clear();

@@ -6,6 +6,7 @@ type ConnectionStatus = "connecting" | "connected" | "disconnected" | "reconnect
 type SessionSummary = { id: string; url: string; title: string };
 type AddConnectionResult = { connectionId: string; browserVersion: string; sessions: SessionSummary[] };
 type FrameEvent = { type: "frame"; connectionId: string; sessionId: string; data: string };
+type ThumbnailEvent = { type: "thumbnail"; connectionId: string; sessionId: string; data: string };
 type SidecarPushEvent =
   | { type: "connectionStatus"; connectionId: string; status: ConnectionStatus; error?: string }
   | { type: "sessionAdded" | "sessionUpdated"; connectionId: string; session: SessionSummary }
@@ -33,6 +34,7 @@ interface Connection {
 }
 
 const connections = new Map<string, Connection>(); // keyed by configId
+const thumbnails = new Map<string, string>(); // sessionId -> base64 jpeg
 let store: Store | null = null;
 
 let connectionsListEl: HTMLElement | null;
@@ -117,11 +119,21 @@ function render() {
       for (const s of conn.sessions.values()) {
         const isActive = conn.connectionId === activeConnectionId && s.id === activeSessionId;
         const sLi = document.createElement("li");
-        sLi.className = "row";
+        sLi.className = "row session-row";
         if (isActive) sLi.classList.add("session-active");
+
+        const thumb = document.createElement("img");
+        thumb.className = "thumb";
+        thumb.id = `thumb-${s.id}`;
+        const cached = thumbnails.get(s.id);
+        if (cached) thumb.src = `data:image/jpeg;base64,${cached}`;
+        sLi.appendChild(thumb);
+
         const label = document.createElement("span");
+        label.className = "session-label";
         label.textContent = `${isActive ? "● " : ""}${s.title || "(untitled)"} — ${s.url}`;
         sLi.appendChild(label);
+
         const controlBtn = document.createElement("button");
         controlBtn.textContent = isActive ? "Controlling" : "Take control";
         controlBtn.disabled = isActive;
@@ -161,7 +173,10 @@ async function connectConfig(conn: Connection) {
     conn.status = "connected";
     conn.error = undefined;
     conn.sessions.clear();
-    for (const s of result.sessions) conn.sessions.set(s.id, s);
+    for (const s of result.sessions) {
+      conn.sessions.set(s.id, s);
+      void startThumbnailFor(result.connectionId, s.id);
+    }
   } catch (err) {
     conn.status = "error";
     conn.error = String(err);
@@ -224,6 +239,22 @@ function findConnectionByLiveId(connectionId: string): Connection | undefined {
   return undefined;
 }
 
+async function startThumbnailFor(connectionId: string, sessionId: string) {
+  try {
+    await invoke("start_thumbnail", { connectionId, sessionId });
+  } catch {
+    // session may already be gone; harmless
+  }
+}
+
+async function stopThumbnailFor(connectionId: string, sessionId: string) {
+  try {
+    await invoke("stop_thumbnail", { connectionId, sessionId });
+  } catch {
+    // session may already be gone; harmless
+  }
+}
+
 function clearCanvas() {
   naturalWidth = 0;
   naturalHeight = 0;
@@ -244,6 +275,7 @@ async function releaseActiveControl() {
   } catch {
     // session may already be gone (closed/disconnected) — nothing more to do
   }
+  void startThumbnailFor(prevConnectionId, prevSessionId); // resume its thumbnail now the live view isn't covering it
 }
 
 async function takeControl(connectionId: string, sessionId: string) {
@@ -253,6 +285,7 @@ async function takeControl(connectionId: string, sessionId: string) {
   activeConnectionId = connectionId;
   activeSessionId = sessionId;
   clearCanvas();
+  void stopThumbnailFor(connectionId, sessionId); // the live screencast covers this session now; no need to also poll thumbnails
 
   const conn = findConnectionByLiveId(connectionId);
   const session = conn?.sessions.get(sessionId);
@@ -307,12 +340,17 @@ function handleSidecarEvent(event: SidecarPushEvent) {
     const conn = findConnectionByLiveId(event.connectionId as string);
     if (!conn) return;
     const session = event.session as SessionSummary;
+    const isNew = !conn.sessions.has(session.id);
     conn.sessions.set(session.id, session);
+    if (isNew && !(conn.connectionId === activeConnectionId && session.id === activeSessionId)) {
+      void startThumbnailFor(event.connectionId as string, session.id);
+    }
     render();
   } else if (event.type === "sessionRemoved") {
     const conn = findConnectionByLiveId(event.connectionId as string);
     if (!conn) return;
     conn.sessions.delete(event.sessionId as string);
+    thumbnails.delete(event.sessionId as string);
     if (event.sessionId === activeSessionId && conn.connectionId === activeConnectionId) {
       activeConnectionId = null;
       activeSessionId = null;
@@ -379,6 +417,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   listen<SidecarPushEvent>("sidecar-event", (event) => handleSidecarEvent(event.payload));
+
+  listen<ThumbnailEvent>("sidecar-thumbnail", (event) => {
+    const { sessionId, data } = event.payload;
+    thumbnails.set(sessionId, data);
+    const img = document.getElementById(`thumb-${sessionId}`) as HTMLImageElement | null;
+    if (img) img.src = `data:image/jpeg;base64,${data}`; // update in place, skip a full render()
+  });
 
   setInterval(render, 1000); // keep the "up Ns" uptime readout live
 });
