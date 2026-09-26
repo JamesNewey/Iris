@@ -12,20 +12,20 @@ It reproduces the two client-side technical requirements Iris actually depends o
 ```bash
 cd dev/test-client
 docker build -t iris-test-client .
-docker create --name iris-test-client -p <HOST_CDP_PORT>:9333 iris-test-client
+docker create --name iris-test-client -p <PORT>:9333 -p <PORT+100>:6080 iris-test-client
 docker start iris-test-client
 ```
 
 `chrome-launcher.js` and `cdp-proxy.js` are baked into the image at build time — no need to `docker cp` them in separately.
 
-Note only the CDP proxy port (9333 → whatever host port you map) needs an explicit `-p` publish for Iris to connect to it in the usual case. The noVNC port (6080) doesn't need one: reach it from the host directly via the container's bridge IP (`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' iris-test-client`), e.g. `http://<that-ip>:6080/vnc.html?autoconnect=true` — that's the URL to paste into Iris's "noVNC admin URL" field when adding the connection.
+**Publish both ports, with the noVNC one exactly 100 higher than the CDP one** (e.g. `9225:9333` and `9325:6080`) — Iris doesn't ask for a separate noVNC URL. It derives the "Open admin view" link itself from the connection's own endpoint, assuming noVNC lives on the same host at `port + 100` (see `NOVNC_PORT_OFFSET` in `src/main.ts`). This is a placeholder assumption standing in for whatever the real Terraform-provisioned clients actually do — keep this container's port mapping in step with that constant, or update both together if it changes.
 
 ## Running a second one
 
-Give it a different name and host port:
+Give it different host ports, same +100 relationship:
 
 ```bash
-docker create --name iris-test-client-2 -p <ANOTHER_HOST_PORT>:9333 iris-test-client
+docker create --name iris-test-client-2 -p <PORT>:9333 -p <PORT+100>:6080 iris-test-client
 docker start iris-test-client-2
 ```
 
