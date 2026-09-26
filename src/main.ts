@@ -652,6 +652,15 @@ window.addEventListener("DOMContentLoaded", async () => {
     void connectConfig(conn); // auto-reconnect persisted connections on launch
   }
 
+  const addConnectionDialog = document.querySelector<HTMLDialogElement>("#add-connection-dialog");
+
+  document.querySelector("#fab-add-connection")?.addEventListener("click", () => {
+    addConnectionDialog?.showModal();
+  });
+  document.querySelector("#cancel-add-connection")?.addEventListener("click", () => {
+    addConnectionDialog?.close();
+  });
+
   document.querySelector("#connect-form")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const nameInput = document.querySelector<HTMLInputElement>("#name-input");
@@ -668,12 +677,14 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (!proceed) return;
     }
 
+    addConnectionDialog?.close();
+    if (tokenInput) tokenInput.value = "";
+
     const configId = crypto.randomUUID();
     const conn: Connection = { configId, connectionId: null, name, endpoint, token, status: "idle", sessions: new Map() };
     connections.set(configId, conn);
     await persist();
     await persistToken(configId, token);
-    if (tokenInput) tokenInput.value = "";
     await connectConfig(conn);
   });
 
