@@ -28,7 +28,6 @@ interface StoredConfig {
   configId: string;
   name: string;
   endpoint: string;
-  novncUrl?: string;
 }
 
 interface Connection {
@@ -37,8 +36,6 @@ interface Connection {
   name: string;
   endpoint: string;
   token?: string;
-  /** Admin-only fallback (Phase 9): the client's noVNC URL, for when CDP control isn't available. */
-  novncUrl?: string;
   status: ConnectionStatus | "idle";
   browserVersion?: string;
   connectedAt?: number;
@@ -78,6 +75,28 @@ const STATUS_LABEL: Record<Connection["status"], string> = {
 
 function statusClass(status: Connection["status"]): string {
   return `status status-${status}`;
+}
+
+// Real clients aren't known to Iris in advance (Terraform's job, not
+// Iris's — see the requirements doc's Non-Goals), so there's no way to ask
+// one "what's your noVNC port". Placeholder assumption until a real
+// convention is known: noVNC lives on the same host as the CDP endpoint, on
+// the CDP port plus a fixed offset. Change NOVNC_PORT_OFFSET (and the dev
+// test-client's port mappings, see dev/test-client/README.md) if that
+// assumption turns out wrong.
+const NOVNC_PORT_OFFSET = 100;
+
+function deriveAdminUrl(endpoint: string): string | undefined {
+  try {
+    const url = new URL(endpoint);
+    if (!url.port) return undefined;
+    url.port = String(Number(url.port) + NOVNC_PORT_OFFSET);
+    url.pathname = "/vnc.html";
+    url.search = "?autoconnect=true";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 // Runs every second to keep the "up Ns" readout live. Deliberately updates
@@ -156,12 +175,13 @@ function render() {
     actions.className = "connection-actions";
     const isLive = conn.connectionId !== null;
 
-    if (conn.novncUrl) {
+    const adminUrl = deriveAdminUrl(conn.endpoint);
+    if (adminUrl) {
       const adminBtn = document.createElement("button");
       adminBtn.textContent = "Open admin view";
       adminBtn.title = "Opens the client's noVNC session directly — an escape hatch for when CDP control isn't available";
       adminBtn.addEventListener("click", () => {
-        openUrl(conn.novncUrl!).catch((err) => showCommandResult(`Failed to open admin view: ${err}`, true));
+        openUrl(adminUrl).catch((err) => showCommandResult(`Failed to open admin view: ${err}`, true));
       });
       actions.appendChild(adminBtn);
     }
@@ -230,7 +250,7 @@ async function persist() {
   for (const conn of connections.values()) {
     // Only name/endpoint go in the plaintext JSON store; the auth token (if
     // any) lives in the OS keychain, keyed by configId — see persistToken().
-    const entry: StoredConfig = { configId: conn.configId, name: conn.name, endpoint: conn.endpoint, novncUrl: conn.novncUrl };
+    const entry: StoredConfig = { configId: conn.configId, name: conn.name, endpoint: conn.endpoint };
     await store.set(conn.configId, entry);
   }
   await store.save();
@@ -623,7 +643,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       name: cfg.name,
       endpoint: cfg.endpoint,
       token,
-      novncUrl: cfg.novncUrl,
       status: "idle",
       sessions: new Map(),
     });
@@ -638,11 +657,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     const nameInput = document.querySelector<HTMLInputElement>("#name-input");
     const endpointInput = document.querySelector<HTMLInputElement>("#endpoint-input");
     const tokenInput = document.querySelector<HTMLInputElement>("#token-input");
-    const novncInput = document.querySelector<HTMLInputElement>("#novnc-input");
     const name = nameInput?.value || "Untitled connection";
     const endpoint = endpointInput?.value ?? "";
     const token = tokenInput?.value || undefined;
-    const novncUrl = novncInput?.value || undefined;
 
     if (endpoint.startsWith("http://")) {
       const proceed = confirm(
@@ -652,7 +669,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     const configId = crypto.randomUUID();
-    const conn: Connection = { configId, connectionId: null, name, endpoint, token, novncUrl, status: "idle", sessions: new Map() };
+    const conn: Connection = { configId, connectionId: null, name, endpoint, token, status: "idle", sessions: new Map() };
     connections.set(configId, conn);
     await persist();
     await persistToken(configId, token);
