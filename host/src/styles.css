@@ -298,12 +298,6 @@ button:hover {
   border-top: 1px solid #e0e0e0;
 }
 
-.control-columns {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 1em;
-}
-
 .control-main {
   overflow-y: auto;
 }
@@ -319,61 +313,6 @@ button:hover {
 .command-buttons {
   justify-content: flex-start;
   margin-bottom: 0.5em;
-}
-
-.control-activity {
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid #e0e0e0;
-  padding-left: 1em;
-  overflow: hidden;
-}
-
-.control-activity h3 {
-  margin: 0 0 0.5em 0;
-  font-size: 0.85em;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #666;
-}
-
-.activity-filter {
-  margin-bottom: 0.5em;
-}
-
-.activity-log {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
-  flex: 1;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 0.78em;
-}
-
-.activity-log li {
-  padding: 0.25em 0;
-  border-bottom: 1px solid #eee;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.activity-log .entry-time {
-  color: #888;
-  margin-right: 0.4em;
-}
-
-.activity-log .entry-navigation {
-  color: #396cd8;
-}
-
-.activity-log .entry-console-error,
-.activity-log .entry-pageerror {
-  color: #a12622;
-}
-
-.activity-log .entry-console-warning {
-  color: #8a6d00;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -408,13 +347,5 @@ button:hover {
 
   .control-panel {
     border-top-color: #3a3a3a;
-  }
-
-  .control-activity {
-    border-left-color: #3a3a3a;
-  }
-
-  .activity-log li {
-    border-bottom-color: #333;
   }
 }

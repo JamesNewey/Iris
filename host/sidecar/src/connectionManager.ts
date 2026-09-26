@@ -256,18 +256,6 @@ export class ConnectionManager {
     page.on("framenavigated", () => {
       this.emit({ type: "sessionUpdated", connectionId: entry.config.id, session: toSummary(session) });
     });
-    page.on("console", (msg) => {
-      this.emit({
-        type: "consoleMessage",
-        connectionId: entry.config.id,
-        sessionId: id,
-        level: msg.type(),
-        text: msg.text(),
-      });
-    });
-    page.on("pageerror", (err) => {
-      this.emit({ type: "pageError", connectionId: entry.config.id, sessionId: id, message: err.message });
-    });
     page.on("close", () => {
       this.clearThumbnailTimer(session);
       entry.sessions.delete(id);

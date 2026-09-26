@@ -12,17 +12,7 @@ type SidecarPushEvent =
   | { type: "connectionStatus"; connectionId: string; status: ConnectionStatus; error?: string }
   | { type: "sessionAdded" | "sessionUpdated"; connectionId: string; session: SessionSummary }
   | { type: "sessionRemoved"; connectionId: string; sessionId: string }
-  | { type: "consoleMessage"; connectionId: string; sessionId: string; level: string; text: string }
-  | { type: "pageError"; connectionId: string; sessionId: string; message: string }
   | { type: "sidecarCrashed" | "sidecarRestarting"; [key: string]: unknown };
-
-type ActivityKind = "navigation" | "console" | "pageerror";
-interface ActivityEntry {
-  timestamp: number;
-  kind: ActivityKind;
-  level?: string;
-  text: string;
-}
 
 interface StoredConfig {
   configId: string;
@@ -45,8 +35,6 @@ interface Connection {
 
 const connections = new Map<string, Connection>(); // keyed by configId
 const thumbnails = new Map<string, string>(); // sessionId -> base64 jpeg
-const activityLogs = new Map<string, ActivityEntry[]>(); // sessionId -> capped entries
-const MAX_ACTIVITY_ENTRIES = 200;
 let store: Store | null = null;
 
 let connectionsListEl: HTMLElement | null;
@@ -54,8 +42,6 @@ let controlPanelEl: HTMLElement | null;
 let controlSessionIdEl: HTMLElement | null;
 let canvasEl: HTMLCanvasElement | null;
 let latencyEl: HTMLElement | null;
-let activityLogEl: HTMLElement | null;
-let activityFilterEl: HTMLInputElement | null;
 let commandResultEl: HTMLElement | null;
 
 let activeConnectionId: string | null = null;
@@ -376,62 +362,6 @@ async function stopThumbnailFor(connectionId: string, sessionId: string) {
   }
 }
 
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString([], { hour12: false });
-}
-
-function activityEntryClass(entry: ActivityEntry): string {
-  if (entry.kind === "navigation") return "entry-navigation";
-  if (entry.kind === "pageerror") return "entry-pageerror";
-  if (entry.level === "error") return "entry-console-error";
-  if (entry.level === "warning") return "entry-console-warning";
-  return "";
-}
-
-function activityEntryText(entry: ActivityEntry): string {
-  const prefix = entry.kind === "navigation" ? "→" : entry.kind === "pageerror" ? "✕" : entry.level === "error" ? "✕" : "·";
-  return `${prefix} ${entry.text}`;
-}
-
-function appendActivityLi(entry: ActivityEntry) {
-  if (!activityLogEl) return;
-  const filter = activityFilterEl?.value.trim().toLowerCase() ?? "";
-  if (filter && !entry.text.toLowerCase().includes(filter)) return;
-
-  const li = document.createElement("li");
-  const cls = activityEntryClass(entry);
-  if (cls) li.className = cls;
-  const time = document.createElement("span");
-  time.className = "entry-time";
-  time.textContent = formatTime(entry.timestamp);
-  li.appendChild(time);
-  li.appendChild(document.createTextNode(activityEntryText(entry)));
-  activityLogEl.appendChild(li);
-  activityLogEl.scrollTop = activityLogEl.scrollHeight;
-}
-
-function logActivity(sessionId: string, kind: ActivityKind, text: string, level?: string) {
-  const entry: ActivityEntry = { timestamp: Date.now(), kind, text, level };
-  let list = activityLogs.get(sessionId);
-  if (!list) {
-    list = [];
-    activityLogs.set(sessionId, list);
-  }
-  list.push(entry);
-  if (list.length > MAX_ACTIVITY_ENTRIES) list.shift();
-
-  if (sessionId === activeSessionId) appendActivityLi(entry);
-}
-
-function renderActivityLog() {
-  if (!activityLogEl) return;
-  activityLogEl.innerHTML = "";
-  if (!activeSessionId) return;
-  for (const entry of activityLogs.get(activeSessionId) ?? []) {
-    appendActivityLi(entry);
-  }
-}
-
 function clearCanvas() {
   naturalWidth = 0;
   naturalHeight = 0;
@@ -472,8 +402,6 @@ async function takeControl(connectionId: string, sessionId: string) {
   if (commandResultEl) commandResultEl.textContent = "";
   const urlInput = document.querySelector<HTMLInputElement>("#url-input");
   if (urlInput) urlInput.value = session?.url ?? "";
-  if (activityFilterEl) activityFilterEl.value = "";
-  renderActivityLog();
 
   await invoke("take_control", { connectionId, sessionId });
   await invoke("start_screencast", { connectionId, sessionId });
@@ -580,20 +508,12 @@ function handleSidecarEvent(event: SidecarPushEvent) {
     if (isNew && !(conn.connectionId === activeConnectionId && session.id === activeSessionId)) {
       void startThumbnailFor(event.connectionId as string, session.id);
     }
-    if (!isNew && previous.url !== session.url) {
-      logActivity(session.id, "navigation", `navigated to ${session.url}`);
-    }
     render();
-  } else if (event.type === "consoleMessage") {
-    logActivity(event.sessionId, "console", event.text, event.level);
-  } else if (event.type === "pageError") {
-    logActivity(event.sessionId, "pageerror", event.message);
   } else if (event.type === "sessionRemoved") {
     const conn = findConnectionByLiveId(event.connectionId as string);
     if (!conn) return;
     conn.sessions.delete(event.sessionId as string);
     thumbnails.delete(event.sessionId as string);
-    activityLogs.delete(event.sessionId as string);
     if (event.sessionId === activeSessionId && conn.connectionId === activeConnectionId) {
       activeConnectionId = null;
       activeSessionId = null;
@@ -609,8 +529,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   controlSessionIdEl = document.querySelector("#control-session-id");
   canvasEl = document.querySelector("#screencast");
   latencyEl = document.querySelector("#latency");
-  activityLogEl = document.querySelector("#activity-log");
-  activityFilterEl = document.querySelector("#activity-filter");
   commandResultEl = document.querySelector("#command-result");
 
   canvasEl?.addEventListener("click", handleCanvasClick);
@@ -626,7 +544,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.querySelector("#back-btn")?.addEventListener("click", () => runSessionCommand("go_back", "Back"));
   document.querySelector("#forward-btn")?.addEventListener("click", () => runSessionCommand("go_forward", "Forward"));
   document.querySelector("#close-session-btn")?.addEventListener("click", handleCloseSession);
-  activityFilterEl?.addEventListener("input", renderActivityLog);
 
   store = await load("connections.json", { autoSave: false });
   const entries = await store.entries<StoredConfig>();
