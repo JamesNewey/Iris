@@ -12,12 +12,6 @@
     <div class="app">
       <header class="app-header">
         <h1>Iris</h1>
-        <form id="connect-form" class="add-connection-form">
-          <input id="name-input" placeholder="Connection name" value="Test client" required />
-          <input id="endpoint-input" placeholder="http://127.0.0.1:9225" value="http://127.0.0.1:9225" required />
-          <input id="token-input" placeholder="Auth token (optional)" type="password" />
-          <button type="submit">Add connection</button>
-        </form>
       </header>
 
       <main class="app-body">
@@ -62,5 +56,20 @@
         </section>
       </main>
     </div>
+
+    <button id="fab-add-connection" class="fab" type="button" title="Add connection" aria-label="Add connection">+</button>
+
+    <dialog id="add-connection-dialog">
+      <form id="connect-form" class="add-connection-form" method="dialog">
+        <h2>Add connection</h2>
+        <input id="name-input" placeholder="Connection name" value="Test client" required />
+        <input id="endpoint-input" placeholder="http://127.0.0.1:9225" value="http://127.0.0.1:9225" required />
+        <input id="token-input" placeholder="Auth token (optional)" type="password" />
+        <div class="dialog-actions">
+          <button id="cancel-add-connection" type="button">Cancel</button>
+          <button type="submit">Add connection</button>
+        </div>
+      </form>
+    </dialog>
   </body>
 </html>
