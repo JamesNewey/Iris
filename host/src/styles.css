@@ -28,21 +28,6 @@ body {
   height: 100vh;
 }
 
-.app-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1em;
-  padding: 0.75em 1.25em;
-  border-bottom: 1px solid #ddd;
-}
-
-.app-header h1 {
-  margin: 0;
-  font-size: 1.1em;
-  white-space: nowrap;
-}
-
 .app-body {
   flex: 1;
   display: flex;
@@ -50,22 +35,6 @@ body {
   gap: 1em;
   padding: 1em;
   overflow-y: auto;
-}
-
-.panel {
-  background: #fff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  padding: 1em;
-  overflow-y: auto;
-}
-
-.panel h2 {
-  margin-top: 0;
-  font-size: 0.95em;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #666;
 }
 
 .row {
@@ -411,15 +380,6 @@ button:hover {
   :root {
     color: #f0f0f0;
     background-color: #1e1e1e;
-  }
-
-  .app-header {
-    border-bottom-color: #3a3a3a;
-  }
-
-  .panel {
-    background: #262626;
-    border-color: #3a3a3a;
   }
 
   #add-connection-dialog {
