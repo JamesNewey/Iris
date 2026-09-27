@@ -1,0 +1,27 @@
+{
+  "name": "Iris — Terraform (Azure deploy)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/azure-cli:1": {},
+    "ghcr.io/devcontainers/features/terraform:1": {},
+    "ghcr.io/devcontainers/features/node:1": { "version": "lts" },
+    "ghcr.io/devcontainers/features/rust:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "workspaceFolder": "/workspaces/Iris",
+  "mounts": [
+    "source=${localEnv:HOME}${localEnv:USERPROFILE}/.claude,target=/home/vscode/.claude,type=bind"
+  ],
+  "remoteEnv": {
+    "ARM_CLIENT_ID": "${localEnv:ARM_CLIENT_ID}",
+    "ARM_CLIENT_SECRET": "${localEnv:ARM_CLIENT_SECRET}",
+    "ARM_SUBSCRIPTION_ID": "${localEnv:ARM_SUBSCRIPTION_ID}",
+    "ARM_TENANT_ID": "${localEnv:ARM_TENANT_ID}"
+  },
+  "postCreateCommand": "az version && terraform version && node --version && npm --version && cargo --version && docker --version",
+  "customizations": {
+    "vscode": {
+      "extensions": ["hashicorp.terraform","anthropic.claude-code"]
+    }
+  }
+}

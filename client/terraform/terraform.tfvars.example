@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (gitignored) and adjust.
+
+location            = "uksouth"
+resource_group_name = "iris"
+name_prefix         = "iris"
+image_tag           = "latest"
+
+client_names = [
+  "lab-1",
+  "lab-2",
+]

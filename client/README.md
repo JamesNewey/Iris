@@ -1,18 +1,26 @@
 # Iris client image
 
-The Docker container image that runs on each remote machine Iris manages. This is one of the two parts of the Iris solution, alongside the desktop app in [`host/`](../host) — see the top-level [README](../README.md) for how they fit together.
+The Docker container image that runs on each remote machine Iris manages. This is one of the two parts of the Iris solution, alongside the desktop app in [`host/`](../host) — see the top-level [README](../README.md) for how they fit together. For deploying this image to real remote machines, see [`terraform/`](terraform) (currently: Azure Container Instances).
 
-It's built from `mcr.microsoft.com/playwright:v1.40.0-jammy` and exposes what the host app needs to connect to it:
+The image's files live in [`docker/`](docker). It's built from `mcr.microsoft.com/playwright:v1.40.0-jammy` and exposes what the host app needs to connect to it:
 
 1. **A reachable CDP endpoint.** Modern Chrome refuses to bind its remote-debugging port to anything but `127.0.0.1` and rejects requests whose `Host` header doesn't match — so a plain `docker run -p` publish of Chrome's CDP port doesn't work. `cdp-proxy.js` is a small reverse proxy that fixes both problems. See the `client-cdp-proxy-requirement` memory for the full story of why this exists.
 2. **A noVNC admin fallback.** `x11vnc` + `websockify` + the `novnc` static web client, attached to the same X display Chrome runs on, so the host app's "Open admin view" escape hatch has something real to open.
 
 `chrome-launcher.js` launches the browser itself (deliberately not via Playwright's own `launch()` — see the comment at the top of that file for why).
 
+## Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PROXY_PORT` | `9333` | Port `cdp-proxy.js` listens on. |
+| `CDP_PORT` | `9222` | Port Chrome's own remote-debugging endpoint is on, inside the container — you shouldn't need to change this. |
+| `NOVNC_PORT` | `6080` | Port `websockify` (and so noVNC) listens on. |
+
 ## Build & run
 
 ```bash
-cd client
+cd client/docker
 docker build -t iris-client .
 docker create --name iris-client -p <PORT>:9333 -p <PORT+100>:6080 iris-client
 docker start iris-client

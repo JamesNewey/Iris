@@ -1,13 +1,9 @@
 # Iris
 
-Desktop app for managing Playwright browser-automation sessions running on remote clients.
+Desktop application for managing Playwright browser-automation sessions running on remote clients.
 
-Full requirements: https://claude.ai/code/artifact/b3215882-b9a8-46ba-8486-9ae19a604880
-
-Two parts, kept clearly separate:
-
-- **[`host/`](host)** — the desktop app itself (what a user runs on their own machine). Tauri v2 (Rust) shell + a Node.js sidecar + a Vite/TypeScript frontend.
-- **[`client/`](client)** — the Docker container image that runs on each remote machine the host app connects to and controls.
+- **[`host/`](host)** — the desktop app itself. Tauri v2 (Rust) shell + a Node.js sidecar + a Vite/TypeScript frontend.
+- **[`client/`](client)** — the Docker container image that runs the Playwright server on each remote machine the host app connects to and controls.
 
 ## `host/` — the desktop app
 

@@ -15,6 +15,14 @@ target
 .env
 .env.*
 
+# Terraform
+client/terraform/**/.terraform/*
+client/terraform/**/*.tfstate
+client/terraform/**/*.tfstate.*
+client/terraform/**/*.tfvars
+!client/terraform/**/*.tfvars.example
+client/terraform/**/crash.log
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

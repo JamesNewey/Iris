@@ -14,7 +14,6 @@ const net = require("net");
 const LISTEN_PORT = parseInt(process.env.PROXY_PORT || "9333", 10);
 const TARGET_HOST = "127.0.0.1";
 const TARGET_PORT = parseInt(process.env.CDP_PORT || "9222", 10);
-
 const server = http.createServer((req, res) => {
   const opts = {
     host: TARGET_HOST,
@@ -32,7 +31,13 @@ const server = http.createServer((req, res) => {
       // external client actually used to reach us.
       const externalHostPort = req.headers.host;
       body = body.split(`${TARGET_HOST}:${TARGET_PORT}`).join(externalHostPort);
-      res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+      // The rewrite changes the body's length whenever the external host:port
+      // isn't exactly as long as 127.0.0.1:9222 (e.g. a real DNS name), so
+      // Chrome's Content-Length no longer matches and strict clients (Node's
+      // parser, so Playwright) reject the response.
+      const headers = { ...upstreamRes.headers, "content-length": Buffer.byteLength(body) };
+      delete headers["transfer-encoding"];
+      res.writeHead(upstreamRes.statusCode, headers);
       res.end(body);
     });
   });
