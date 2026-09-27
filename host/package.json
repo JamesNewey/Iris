@@ -7,7 +7,7 @@
     "sidecar"
   ],
   "scripts": {
-    "dev": "concurrently -n sidecar,tauri -c yellow,cyan \"npm run dev -w sidecar\" \"npm run tauri dev\"",
+    "dev": "tauri dev",
     "dev:web": "vite",
     "build": "npm run build:web && npm run build -w sidecar && tauri build",
     "build:web": "tsc && vite build",

@@ -25,7 +25,6 @@ interface Connection {
   connectionId: string | null; // null while disconnected
   name: string;
   endpoint: string;
-  token?: string;
   status: ConnectionStatus | "idle";
   browserVersion?: string;
   connectedAt?: number;
@@ -172,6 +171,13 @@ function render() {
       actions.appendChild(adminBtn);
     }
 
+    const newTabBtn = document.createElement("button");
+    newTabBtn.textContent = "New tab";
+    newTabBtn.title = "Opens a new tab (session) in this client's browser";
+    newTabBtn.disabled = !isLive;
+    newTabBtn.addEventListener("click", () => newSession(conn.configId));
+    actions.appendChild(newTabBtn);
+
     const toggleBtn = document.createElement("button");
     toggleBtn.textContent = isLive ? "Disconnect" : "Reconnect";
     toggleBtn.addEventListener("click", () => (isLive ? disconnectConnection(conn.configId) : reconnectConnection(conn.configId)));
@@ -234,24 +240,10 @@ async function persist() {
   if (!store) return;
   await store.clear();
   for (const conn of connections.values()) {
-    // Only name/endpoint go in the plaintext JSON store; the auth token (if
-    // any) lives in the OS keychain, keyed by configId — see persistToken().
     const entry: StoredConfig = { configId: conn.configId, name: conn.name, endpoint: conn.endpoint };
     await store.set(conn.configId, entry);
   }
   await store.save();
-}
-
-async function persistToken(configId: string, token: string | undefined) {
-  try {
-    if (token) {
-      await invoke("store_token", { configId, token });
-    } else {
-      await invoke("delete_token", { configId });
-    }
-  } catch (err) {
-    console.error("Failed to persist token in OS keychain:", err);
-  }
 }
 
 async function connectConfig(conn: Connection) {
@@ -261,7 +253,6 @@ async function connectConfig(conn: Connection) {
     const result = await invoke<AddConnectionResult>("add_connection", {
       name: conn.name,
       endpoint: conn.endpoint,
-      token: conn.token,
     });
     conn.connectionId = result.connectionId;
     conn.browserVersion = result.browserVersion;
@@ -325,7 +316,6 @@ async function removeConnection(configId: string) {
     await store.delete(configId);
     await store.save();
   }
-  await persistToken(configId, undefined); // remove any stored auth token too
   render();
 }
 
@@ -456,6 +446,18 @@ async function handleNavigateSubmit(ev: SubmitEvent) {
   await runSessionCommand("navigate", "Navigate", { url });
 }
 
+async function newSession(configId: string) {
+  const conn = connections.get(configId);
+  if (!conn?.connectionId) return;
+  showCommandResult("New tab…");
+  try {
+    await invoke("new_session", { connectionId: conn.connectionId });
+    showCommandResult("New tab: success");
+  } catch (err) {
+    showCommandResult(`New tab failed: ${err}`, true);
+  }
+}
+
 async function handleCloseSession() {
   if (!activeConnectionId || !activeSessionId) return;
   if (!confirm("Close this session's page? This cannot be undone.")) return;
@@ -548,18 +550,11 @@ window.addEventListener("DOMContentLoaded", async () => {
   store = await load("connections.json", { autoSave: false });
   const entries = await store.entries<StoredConfig>();
   for (const [, cfg] of entries) {
-    let token: string | undefined;
-    try {
-      token = (await invoke<string | null>("get_token", { configId: cfg.configId })) ?? undefined;
-    } catch (err) {
-      console.error("Failed to read token from OS keychain:", err);
-    }
     connections.set(cfg.configId, {
       configId: cfg.configId,
       connectionId: null,
       name: cfg.name,
       endpoint: cfg.endpoint,
-      token,
       status: "idle",
       sessions: new Map(),
     });
@@ -582,26 +577,22 @@ window.addEventListener("DOMContentLoaded", async () => {
     e.preventDefault();
     const nameInput = document.querySelector<HTMLInputElement>("#name-input");
     const endpointInput = document.querySelector<HTMLInputElement>("#endpoint-input");
-    const tokenInput = document.querySelector<HTMLInputElement>("#token-input");
     const name = nameInput?.value || "Untitled connection";
-    const endpoint = endpointInput?.value ?? "";
-    const token = tokenInput?.value || undefined;
+    const endpoint = endpointInput?.value.trim() ?? "";
 
     if (endpoint.startsWith("http://")) {
       const proceed = confirm(
-        "This endpoint isn't using HTTPS — traffic to it (including any auth token) travels in plaintext. Continue anyway?"
+        "This endpoint isn't using HTTPS — traffic to it travels in plaintext. Continue anyway?"
       );
       if (!proceed) return;
     }
 
     addConnectionDialog?.close();
-    if (tokenInput) tokenInput.value = "";
 
     const configId = crypto.randomUUID();
-    const conn: Connection = { configId, connectionId: null, name, endpoint, token, status: "idle", sessions: new Map() };
+    const conn: Connection = { configId, connectionId: null, name, endpoint, status: "idle", sessions: new Map() };
     connections.set(configId, conn);
     await persist();
-    await persistToken(configId, token);
     await connectConfig(conn);
   });
 

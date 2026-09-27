@@ -87,21 +87,10 @@ macro_rules! sidecar_command {
     };
 }
 
-#[tauri::command]
-async fn add_connection(
-    state: tauri::State<'_, Arc<SidecarState>>,
-    name: String,
-    endpoint: String,
-    token: Option<String>,
-) -> Result<Value, String> {
-    let mut payload = json!({ "type": "addConnection", "name": name, "endpoint": endpoint });
-    if let Some(t) = token {
-        payload["token"] = json!(t);
-    }
-    send_request(&state, payload).await
-}
+sidecar_command!(add_connection, "addConnection", name: String => "name", endpoint: String => "endpoint");
 sidecar_command!(remove_connection, "removeConnection", connection_id: String => "connectionId");
 sidecar_command!(list_sessions, "listSessions", connection_id: String => "connectionId");
+sidecar_command!(new_session, "newSession", connection_id: String => "connectionId");
 sidecar_command!(navigate, "navigate", connection_id: String => "connectionId", session_id: String => "sessionId", url: String => "url");
 sidecar_command!(reload_session, "reload", connection_id: String => "connectionId", session_id: String => "sessionId");
 sidecar_command!(go_back, "goBack", connection_id: String => "connectionId", session_id: String => "sessionId");
@@ -140,40 +129,6 @@ async fn send_click(
         json!({ "type": "click", "connectionId": connection_id, "sessionId": session_id, "x": x, "y": y }),
     )
     .await
-}
-
-// Auth tokens live in the OS keychain, keyed by the frontend's persisted
-// configId — never in the plaintext connection-config store, and never held
-// by the sidecar longer than the life of a single connect call.
-const TOKEN_SERVICE: &str = "iris-connection-token";
-
-fn token_entry(config_id: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(TOKEN_SERVICE, config_id).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn store_token(config_id: String, token: String) -> Result<(), String> {
-    token_entry(&config_id)?
-        .set_password(&token)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn get_token(config_id: String) -> Result<Option<String>, String> {
-    match token_entry(&config_id)?.get_password() {
-        Ok(password) => Ok(Some(password)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-#[tauri::command]
-fn delete_token(config_id: String) -> Result<(), String> {
-    match token_entry(&config_id)?.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
-    }
 }
 
 enum ConnectOutcome {
@@ -215,7 +170,14 @@ fn kill_process_group(_pid: u32) {}
 /// connection ends (crash, deliberate shutdown, or spawn failure).
 async fn run_sidecar_once(app: &AppHandle, state: &Arc<SidecarState>) -> Result<(), String> {
     let mut cmd = Command::new("../node_modules/.bin/tsx");
+    // Dev builds run it under `tsx watch` so sidecar edits reload it: the
+    // restart drops our WS, which kills this group and respawns below. The app
+    // is the sidecar's only owner, so it can never outlive the app.
+    if cfg!(debug_assertions) {
+        cmd.arg("watch");
+    }
     cmd.arg("../sidecar/src/index.ts");
+    cmd.env("IRIS_PARENT_PID", std::process::id().to_string());
     cmd.kill_on_drop(true);
     // Put the sidecar (and anything it forks, e.g. tsx's own node child) in
     // its own process group so we can kill the whole tree on exit instead of
@@ -271,6 +233,14 @@ async fn run_sidecar_once(app: &AppHandle, state: &Arc<SidecarState>) -> Result<
     }
 
     *state.writer.lock().await = None;
+    // Kill the whole group before the supervisor spawns a replacement — just
+    // dropping the Child only kills tsx itself, leaving its node child alive
+    // and holding the port.
+    if let Some(child) = state.child.lock().await.take() {
+        if let Some(pid) = child.id() {
+            kill_process_group(pid);
+        }
+    }
     let mut pending = state.pending.lock().await;
     for (_, tx) in pending.drain() {
         let _ = tx.send(json!({ "type": "error", "error": "sidecar disconnected" }));
@@ -329,6 +299,7 @@ pub fn run() {
             go_back,
             go_forward,
             close_session,
+            new_session,
             take_control,
             release_control,
             start_screencast,
@@ -337,9 +308,6 @@ pub fn run() {
             stop_thumbnail,
             send_click,
             send_key,
-            store_token,
-            get_token,
-            delete_token,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

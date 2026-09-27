@@ -17,6 +17,8 @@ interface SessionEntry {
   headless: boolean;
   createdAt: number;
   thumbnailTimer: NodeJS.Timeout | null;
+  /** Last title read from the page — sent with every summary so updates never blank it. */
+  title: string;
 }
 
 interface ConnectionEntry {
@@ -34,7 +36,7 @@ function toSummary(entry: SessionEntry): SessionSummary {
   return {
     id: entry.id,
     url: entry.page.url(),
-    title: "", // filled in lazily by callers that can await page.title()
+    title: entry.title,
     headless: entry.headless,
     underControl: entry.underControl,
     createdAt: entry.createdAt,
@@ -47,10 +49,10 @@ export class ConnectionManager {
 
   constructor(private emit: (event: SidecarEvent) => void) {}
 
-  async addConnection(name: string, endpoint: string, token?: string): Promise<{ connectionId: string; browserVersion: string; sessions: SessionSummary[] }> {
+  async addConnection(name: string, endpoint: string): Promise<{ connectionId: string; browserVersion: string; sessions: SessionSummary[] }> {
     const id = randomUUID();
     const entry: ConnectionEntry = {
-      config: { id, name, endpoint, token },
+      config: { id, name, endpoint },
       status: "connecting",
       browser: null,
       browserVersion: null,
@@ -86,6 +88,15 @@ export class ConnectionManager {
   async listSessions(connectionId: string): Promise<SessionSummary[]> {
     const entry = this.getEntry(connectionId);
     return Promise.all([...entry.sessions.values()].map((s) => this.summarizeWithTitle(s)));
+  }
+
+  async newSession(connectionId: string): Promise<void> {
+    const entry = this.getEntry(connectionId);
+    const context = entry.browser?.contexts()[0];
+    if (!context) throw new Error(`Connection ${connectionId} has no browser context to open a tab in`);
+    await context.newPage();
+    // the context's 'page' listener (registered in connectEntry) picks the new
+    // page up and emits sessionAdded.
   }
 
   async navigate(connectionId: string, sessionId: string, url: string): Promise<void> {
@@ -156,6 +167,8 @@ export class ConnectionManager {
       try {
         const buf = await session.page.screenshot({ type: "jpeg", quality: 40, timeout: intervalMs });
         this.emit({ type: "thumbnail", connectionId, sessionId, data: buf.toString("base64") });
+        // Also catches titles a page changes after load (SPAs, unread counts).
+        await this.refreshTitle(connectionId, session);
       } catch {
         // page may be navigating or closed between ticks; skip this frame
       }
@@ -207,22 +220,28 @@ export class ConnectionManager {
   }
 
   private async summarizeWithTitle(session: SessionEntry): Promise<SessionSummary> {
-    let title = "";
     try {
-      title = await session.page.title();
+      session.title = await session.page.title();
     } catch {
-      // page may be navigating away right now; best-effort only
+      // page may be navigating away right now; keep the last known title
     }
-    return { ...toSummary(session), title };
+    return toSummary(session);
+  }
+
+  /** Re-reads the page title and emits sessionUpdated if it changed. */
+  private async refreshTitle(connectionId: string, session: SessionEntry): Promise<void> {
+    const before = session.title;
+    const summary = await this.summarizeWithTitle(session);
+    // A tab closed mid-read must not be resurrected in the UI by a late update.
+    if (session.page.isClosed()) return;
+    if (summary.title !== before) this.emit({ type: "sessionUpdated", connectionId, session: summary });
   }
 
   private async connectEntry(entry: ConnectionEntry): Promise<void> {
     entry.status = "connecting";
     this.emit({ type: "connectionStatus", connectionId: entry.config.id, status: "connecting" });
 
-    const browser = await chromium.connectOverCDP(entry.config.endpoint, {
-      headers: entry.config.token ? { Authorization: `Bearer ${entry.config.token}` } : undefined,
-    });
+    const browser = await chromium.connectOverCDP(entry.config.endpoint);
     entry.browser = browser;
     entry.browserVersion = browser.version();
     entry.status = "connected";
@@ -250,12 +269,18 @@ export class ConnectionManager {
       headless: false, // CDP-attached pages don't expose this reliably; default false until a better signal exists
       createdAt: Date.now(),
       thumbnailTimer: null,
+      title: "",
     };
     entry.sessions.set(id, session);
 
-    page.on("framenavigated", () => {
+    page.on("framenavigated", (frame) => {
+      if (frame !== page.mainFrame()) return;
+      // URL changes now; the new page's title usually isn't there yet, so the
+      // last title is kept until domcontentloaded/load refresh it below.
       this.emit({ type: "sessionUpdated", connectionId: entry.config.id, session: toSummary(session) });
     });
+    page.on("domcontentloaded", () => void this.refreshTitle(entry.config.id, session));
+    page.on("load", () => void this.refreshTitle(entry.config.id, session));
     page.on("close", () => {
       this.clearThumbnailTimer(session);
       entry.sessions.delete(id);
@@ -265,6 +290,7 @@ export class ConnectionManager {
     if (announce) {
       this.emit({ type: "sessionAdded", connectionId: entry.config.id, session: toSummary(session) });
     }
+    void this.refreshTitle(entry.config.id, session);
   }
 
   private handleDisconnect(entry: ConnectionEntry): void {

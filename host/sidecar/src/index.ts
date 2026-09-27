@@ -5,6 +5,31 @@ import type { SidecarEvent } from "./types.js";
 
 const PORT = 8765;
 
+// Backstop for when the app dies without running its exit handler (SIGKILL,
+// Ctrl+C on `tauri dev`, a crash): the app passes its PID, and we exit once
+// it's gone rather than lingering as an orphan holding PORT.
+// We run under tsx (`tsx watch` in dev), so also stop that launcher — it's
+// our parent now, while the app is still alive; later it may have been
+// reparented, so it's recorded up front.
+const parentPid = Number(process.env.IRIS_PARENT_PID);
+const launcherPid = process.ppid;
+if (parentPid) {
+  setInterval(() => {
+    try {
+      process.kill(parentPid, 0);
+    } catch {
+      if (launcherPid !== parentPid) {
+        try {
+          process.kill(launcherPid, "SIGTERM");
+        } catch {
+          // already gone
+        }
+      }
+      process.exit(0);
+    }
+  }, 2000).unref();
+}
+
 const sockets = new Set<WebSocket>();
 
 function broadcast(event: SidecarEvent) {
@@ -17,9 +42,10 @@ function broadcast(event: SidecarEvent) {
 const manager = new ConnectionManager(broadcast);
 
 const incomingSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("addConnection"), requestId: z.number(), name: z.string(), endpoint: z.string(), token: z.string().optional() }),
+  z.object({ type: z.literal("addConnection"), requestId: z.number(), name: z.string(), endpoint: z.string() }),
   z.object({ type: z.literal("removeConnection"), requestId: z.number(), connectionId: z.string() }),
   z.object({ type: z.literal("listSessions"), requestId: z.number(), connectionId: z.string() }),
+  z.object({ type: z.literal("newSession"), requestId: z.number(), connectionId: z.string() }),
   z.object({ type: z.literal("navigate"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), url: z.string() }),
   z.object({ type: z.literal("reload"), requestId: z.number(), connectionId: z.string(), sessionId: z.string() }),
   z.object({ type: z.literal("goBack"), requestId: z.number(), connectionId: z.string(), sessionId: z.string() }),
@@ -40,12 +66,15 @@ type IncomingMessage = z.infer<typeof incomingSchema>;
 async function handle(msg: IncomingMessage): Promise<unknown> {
   switch (msg.type) {
     case "addConnection":
-      return manager.addConnection(msg.name, msg.endpoint, msg.token);
+      return manager.addConnection(msg.name, msg.endpoint);
     case "removeConnection":
       await manager.removeConnection(msg.connectionId);
       return {};
     case "listSessions":
       return { sessions: await manager.listSessions(msg.connectionId) };
+    case "newSession":
+      await manager.newSession(msg.connectionId);
+      return {};
     case "navigate":
       await manager.navigate(msg.connectionId, msg.sessionId, msg.url);
       return {};
