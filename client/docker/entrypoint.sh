@@ -9,5 +9,9 @@ sleep 1
 x11vnc -display :99 -forever -shared -nopw -rfbport 5900 -bg -o /tmp/x11vnc.log
 
 websockify --web=/usr/share/novnc/ "$NOVNC_PORT" localhost:5900 &
+if [ -n "$UPSTREAM_PROXY" ]; then
+  node upstream-proxy.js &
+  sleep 0.5
+fi
 node chrome-launcher.js &
 exec node cdp-proxy.js

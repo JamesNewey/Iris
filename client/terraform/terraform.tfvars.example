@@ -9,3 +9,12 @@ client_names = [
   "lab-1",
   "lab-2",
 ]
+
+# Optional: authenticated proxy every client's Chrome browses through. `port`
+# is the first client's; each later client in client_names gets the next port up.
+# upstream_proxy = {
+#   host     = "gb.decodo.com"
+#   port     = 30001
+#   username = "USERNAME"
+#   password = "PASSWORD"
+# }

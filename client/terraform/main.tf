@@ -7,6 +7,16 @@ locals {
     for f in sort(fileset("${path.module}/../docker", "**")) : filesha256("${path.module}/../docker/${f}")
   ])), 0, 12)
   image = "${azurerm_container_registry.this.login_server}/iris-client:${var.image_tag}-${local.image_source_hash}"
+
+  # upstream_proxy.port is the first client's; each later client in
+  # client_names gets the next port up, so every client has its own sticky
+  # session (and exit IP) on the proxy.
+  upstream_proxies = {
+    for i, name in var.client_names : name =>
+    var.upstream_proxy == null ? "" : format("http://%s:%s@%s:%d",
+      urlencode(var.upstream_proxy.username), urlencode(var.upstream_proxy.password),
+    var.upstream_proxy.host, var.upstream_proxy.port + i)
+  }
 }
 
 resource "azurerm_resource_group" "this" {
@@ -70,6 +80,8 @@ module "client" {
 
   cdp_port   = var.cdp_port
   novnc_port = var.cdp_port + var.novnc_port_offset
+
+  upstream_proxy = local.upstream_proxies[each.value]
 
   container_cpu       = var.container_cpu
   container_memory_gb = var.container_memory_gb

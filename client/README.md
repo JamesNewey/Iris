@@ -18,6 +18,8 @@ The image's files live in [`docker/`](docker). It's built from `mcr.microsoft.co
 | `PROXY_PORT` | `9333` | Port `cdp-proxy.js` listens on. |
 | `CDP_PORT` | `9222` | Port Chrome's own remote-debugging endpoint is on, inside the container — you shouldn't need to change this. |
 | `NOVNC_PORT` | `6080` | Port `websockify` (and so noVNC) listens on. |
+| `UPSTREAM_PROXY` | _(unset)_ | Authenticated proxy Chrome browses through, as `http://user:pass@host:port`. Unset means Chrome browses directly. |
+| `BLOCKED_HOSTS` | `*.googleapis.com,*.gvt1.com,*.googleusercontent.com` | Only used with `UPSTREAM_PROXY`. Comma-separated hosts refused with a 403 instead of being sent upstream; `*.example.com` also matches `example.com` itself. Set it empty to block nothing. |
 
 ## Build & run
 
@@ -31,6 +33,18 @@ docker start iris-client
 `chrome-launcher.js` and `cdp-proxy.js` are baked into the image at build time.
 
 **Publish both ports, with the noVNC one exactly 100 higher than the CDP one** (e.g. `9225:9333` and `9325:6080`) — the host app doesn't ask for a separate noVNC URL, it derives the "Open admin view" link from the connection's own endpoint, assuming noVNC lives on the same host at `port + 100` (see `NOVNC_PORT_OFFSET` in `host/src/main.ts`). Keep that constant and this image's port mapping in step if the convention ever changes.
+
+To route a local container through an authenticated proxy, add
+`-e UPSTREAM_PROXY="http://USER:PASS@HOST:PORT"` to `docker create`.
+
+### Testing the proxy
+
+`scripts/test-proxy.sh [COUNT] [URL]` fetches `URL` (default
+`https://api.ipify.org`, which returns the exit IP) through `COUNT`
+consecutive ports starting at `upstream_proxy.port` (default: one per client).
+It takes the settings from `upstream_proxy` in `terraform/terraform.tfvars`,
+via `terraform console`, so it tests exactly what a deploy would use. It prints each port's exit IP or, on failure, the proxy's own
+explanation, and exits non-zero if any port failed.
 
 ## Running more than one (for local multi-connection testing)
 

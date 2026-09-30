@@ -41,6 +41,12 @@ variable "novnc_port" {
   type = number
 }
 
+variable "upstream_proxy" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
 variable "container_cpu" {
   type    = number
   default = 2

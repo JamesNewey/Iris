@@ -10,7 +10,18 @@
 const { spawn } = require("child_process");
 const { chromium } = require("playwright-core");
 
-const CHROME = chromium.executablePath();
+const CHROME = process.env.CHROME_PATH || chromium.executablePath();
+console.log("launching", CHROME);
+
+// With UPSTREAM_PROXY set, entrypoint.sh runs upstream-proxy.js and all
+// browsing goes through it. WebRTC is restricted to the proxy too, otherwise
+// it leaks the container's real IP over UDP.
+const proxyArgs = process.env.UPSTREAM_PROXY
+  ? [
+      `--proxy-server=http://127.0.0.1:${process.env.LOCAL_PROXY_PORT || "3128"}`,
+      "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ]
+  : [];
 
 const child = spawn(
   CHROME,
@@ -21,6 +32,7 @@ const child = spawn(
     "--user-data-dir=/tmp/chrome-profile",
     "--no-first-run",
     "--no-default-browser-check",
+    ...proxyArgs,
   ],
   { stdio: "inherit", env: { ...process.env, DISPLAY: ":99" } }
 );

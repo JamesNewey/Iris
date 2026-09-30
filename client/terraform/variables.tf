@@ -39,6 +39,18 @@ variable "novnc_port_offset" {
   default     = 100
 }
 
+variable "upstream_proxy" {
+  description = "Authenticated HTTP proxy the clients' Chrome browses through; null means browse directly. `port` is the first client's port, and each later entry in client_names gets the next port up (port+1, port+2, ...), so reordering or removing names shifts the others' ports."
+  type = object({
+    host     = string
+    port     = number
+    username = string
+    password = string
+  })
+  default   = null
+  sensitive = true
+}
+
 variable "container_cpu" {
   description = "vCPU cores per client container (Chromium + Xvfb + VNC needs headroom)."
   type        = number

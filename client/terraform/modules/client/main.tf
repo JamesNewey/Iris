@@ -32,5 +32,9 @@ resource "azurerm_container_group" "this" {
       PROXY_PORT = tostring(var.cdp_port)
       NOVNC_PORT = tostring(var.novnc_port)
     }
+
+    secure_environment_variables = var.upstream_proxy == "" ? {} : {
+      UPSTREAM_PROXY = var.upstream_proxy
+    }
   }
 }

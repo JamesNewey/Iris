@@ -69,6 +69,11 @@ terraform init
 terraform apply
 ```
 
+Set `upstream_proxy` in `terraform.tfvars` to route every client's Chrome
+through an authenticated proxy. Its `port` is the first client's, and each
+later entry in `client_names` gets the next port up. Check the proxy before
+deploying with `../scripts/test-proxy.sh`.
+
 `name_prefix` feeds every client's public DNS label
 (`<name_prefix>-<client-name>.<region>.azurecontainer.io`), which is globally
 unique across all of Azure in that region — pick something more distinctive
