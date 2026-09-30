@@ -7,6 +7,8 @@ The image's files live in [`docker/`](docker). It's built from `mcr.microsoft.co
 1. **A reachable CDP endpoint.** Modern Chrome refuses to bind its remote-debugging port to anything but `127.0.0.1` and rejects requests whose `Host` header doesn't match — so a plain `docker run -p` publish of Chrome's CDP port doesn't work. `cdp-proxy.js` is a small reverse proxy that fixes both problems. See the `client-cdp-proxy-requirement` memory for the full story of why this exists.
 2. **A noVNC admin fallback.** `x11vnc` + `websockify` + the `novnc` static web client, attached to the same X display Chrome runs on, so the host app's "Open admin view" escape hatch has something real to open.
 
+3. **Resource stats.** `cdp-proxy.js` also answers `GET /iris/stats` itself (it isn't forwarded to Chrome) with the whole container's CPU and memory usage and limits, read from its cgroup. The host app polls it every 5 s to show a per-connection CPU/memory readout; older images without the route simply show none.
+
 `chrome-launcher.js` launches the browser itself (deliberately not via Playwright's own `launch()` — see the comment at the top of that file for why).
 
 ## Environment variables

@@ -81,8 +81,19 @@ After it applies:
 terraform output -json clients
 ```
 
-gives you, per client, the `cdp_endpoint` to paste into Iris's "Add
-connection" dialog.
+gives you, per client, the `cdp_endpoint` for Iris's "Add connection" dialog
+(plus its current `ip_address` — which changes whenever the container group
+is replaced, so connect by the endpoint's hostname instead).
+
+To add them all at once, save the output to a file and use **Import from
+file…** in Iris's "Add connection" dialog:
+
+```bash
+terraform output -json clients > ~/iris-clients.json
+```
+
+Each client becomes a connection named after it; endpoints Iris already has
+are skipped, so re-importing after adding clients is safe.
 
 (`novnc_url` is also printed, but only so you can sanity-check it against
 what Iris derives on its own — you never paste it anywhere.)

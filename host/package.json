@@ -7,7 +7,7 @@
     "sidecar"
   ],
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "node scripts/dev.mjs",
     "dev:web": "vite",
     "build": "npm run build:web && npm run build -w sidecar && tauri build",
     "build:web": "tsc && vite build",

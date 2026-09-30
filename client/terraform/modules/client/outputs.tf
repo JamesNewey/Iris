@@ -2,6 +2,11 @@ output "fqdn" {
   value = azurerm_container_group.this.fqdn
 }
 
+output "ip_address" {
+  description = "Public IP Azure assigned this container group. Changes whenever the group is replaced — the fqdn doesn't, so prefer that for connecting."
+  value       = azurerm_container_group.this.ip_address
+}
+
 output "cdp_endpoint" {
   description = "Paste into Iris's 'Add connection' endpoint field."
   value       = "http://${azurerm_container_group.this.fqdn}:${var.cdp_port}"

@@ -10,6 +10,11 @@
 
   <body>
     <div class="app">
+      <header class="app-header">
+        <label for="new-tab-url-input">New tab URL</label>
+        <input id="new-tab-url-input" placeholder="about:blank" spellcheck="false" />
+        <span id="new-tab-url-status" class="muted small"></span>
+      </header>
       <main class="app-body">
         <ul id="connections-list" class="connections-list"></ul>
 
@@ -47,6 +52,8 @@
         <input id="name-input" placeholder="Connection name" value="Test client" required />
         <input id="endpoint-input" placeholder="http://127.0.0.1:9225" value="http://127.0.0.1:9225" required />
         <div class="dialog-actions">
+          <button id="import-connections" class="import-button" type="button" title="Add every client from a JSON file, e.g. the output of `terraform output -json clients`">Import from file…</button>
+          <input id="import-file-input" type="file" accept=".json,application/json" hidden />
           <button id="cancel-add-connection" type="button">Cancel</button>
           <button type="submit">Add connection</button>
         </div>

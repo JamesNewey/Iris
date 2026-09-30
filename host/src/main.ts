@@ -12,7 +12,11 @@ type SidecarPushEvent =
   | { type: "connectionStatus"; connectionId: string; status: ConnectionStatus; error?: string }
   | { type: "sessionAdded" | "sessionUpdated"; connectionId: string; session: SessionSummary }
   | { type: "sessionRemoved"; connectionId: string; sessionId: string }
+  | ({ type: "connectionStats"; connectionId: string } & ClientStats)
   | { type: "sidecarCrashed" | "sidecarRestarting"; [key: string]: unknown };
+type ClientStats = { cpuPercent: number; cpuLimitCores: number; memoryBytes: number; memoryLimitBytes: number; source: string };
+
+const STATS_HISTORY = 60; // samples kept for the sparkline — 5 min at the sidecar's 5 s poll
 
 interface StoredConfig {
   configId: string;
@@ -30,11 +34,16 @@ interface Connection {
   connectedAt?: number;
   error?: string;
   sessions: Map<string, SessionSummary>;
+  stats?: ClientStats;
+  cpuHistory: number[];
 }
 
 const connections = new Map<string, Connection>(); // keyed by configId
 const thumbnails = new Map<string, string>(); // sessionId -> base64 jpeg
 let store: Store | null = null;
+// Separate from `store`: persist() clears and rewrites that one wholesale.
+let settingsStore: Store | null = null;
+let newTabUrl = "";
 
 let connectionsListEl: HTMLElement | null;
 let controlPanelEl: HTMLElement | null;
@@ -101,6 +110,35 @@ function updateUptimes() {
   }
 }
 
+function formatGb(bytes: number): string {
+  return (bytes / 1024 ** 3).toFixed(1);
+}
+
+/** Fills the title bar's resource readout; called from render() and, in place, on each stats event. */
+function fillStatsEl(el: HTMLElement, conn: Connection) {
+  const stats = conn.stats;
+  if (!stats) return;
+  const memPercent = (stats.memoryBytes / stats.memoryLimitBytes) * 100;
+  const worst = Math.max(stats.cpuPercent, memPercent);
+  el.classList.toggle("stats-warn", worst >= 75 && worst < 90);
+  el.classList.toggle("stats-crit", worst >= 90);
+  el.title =
+    `CPU ${stats.cpuPercent.toFixed(0)}% of ${stats.cpuLimitCores} vCPU · ` +
+    `memory ${formatGb(stats.memoryBytes)} of ${formatGb(stats.memoryLimitBytes)} GB` +
+    (stats.source === "host" ? " (whole machine — container limits unavailable)" : " (whole client container)") +
+    ` · sparkline: CPU, last ${Math.round((conn.cpuHistory.length * 5) / 60)} min`;
+
+  const width = 60;
+  const height = 14;
+  const points = conn.cpuHistory
+    .map((v, i) => `${(i / (STATS_HISTORY - 1)) * width},${height - (v / 100) * height}`)
+    .join(" ");
+  el.innerHTML =
+    `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true">` +
+    `<polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.2" /></svg>` +
+    `<span>CPU ${stats.cpuPercent.toFixed(0)}% · Mem ${formatGb(stats.memoryBytes)} / ${formatGb(stats.memoryLimitBytes)} GB</span>`;
+}
+
 function render() {
   if (!connectionsListEl) return;
   controlPanelEl?.remove(); // detach; re-attached below only if a session is actually under control
@@ -152,6 +190,14 @@ function render() {
       titlebar.appendChild(metaEl);
     }
 
+    if (conn.stats && conn.status === "connected") {
+      const statsEl = document.createElement("span");
+      statsEl.id = `stats-${conn.configId}`;
+      statsEl.className = "connection-stats small";
+      fillStatsEl(statsEl, conn);
+      titlebar.appendChild(statsEl);
+    }
+
     const spacer = document.createElement("span");
     spacer.className = "spacer";
     titlebar.appendChild(spacer);
@@ -173,7 +219,7 @@ function render() {
 
     const newTabBtn = document.createElement("button");
     newTabBtn.textContent = "New tab";
-    newTabBtn.title = "Opens a new tab (session) in this client's browser";
+    newTabBtn.title = "Opens a new tab (session) in this client's browser, at the New tab URL set at the top";
     newTabBtn.disabled = !isLive;
     newTabBtn.addEventListener("click", () => newSession(conn.configId));
     actions.appendChild(newTabBtn);
@@ -430,20 +476,53 @@ async function runSessionCommand(tauriCommand: string, label: string, extra: Rec
   }
 }
 
+/** Adds https:// to a bare host like "example.com"; returns null if it still isn't a valid URL. */
+function normalizeUrl(raw: string): string | null {
+  let url = raw.trim();
+  // "scheme://..." or about:/data: are left alone; "localhost:3000" is a host, not a scheme.
+  if (!/^([a-z][a-z0-9+.-]*:\/\/|about:|data:)/i.test(url)) url = `https://${url}`;
+  try {
+    new URL(url);
+    return url;
+  } catch {
+    return null;
+  }
+}
+
 async function handleNavigateSubmit(ev: SubmitEvent) {
   ev.preventDefault();
   const input = document.querySelector<HTMLInputElement>("#url-input");
   const raw = input?.value.trim() ?? "";
   if (!raw) return;
-  let url = raw;
-  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-  try {
-    new URL(url);
-  } catch {
+  const url = normalizeUrl(raw);
+  if (!url) {
     showCommandResult(`Invalid URL: ${raw}`, true);
     return;
   }
   await runSessionCommand("navigate", "Navigate", { url });
+}
+
+async function saveNewTabUrl(input: HTMLInputElement, statusEl: HTMLElement | null) {
+  const raw = input.value.trim();
+  const url = raw ? normalizeUrl(raw) : "";
+  if (url === null) {
+    if (statusEl) {
+      statusEl.textContent = "Invalid URL — not saved";
+      statusEl.style.color = "#a12622";
+    }
+    return;
+  }
+  input.value = url;
+  if (url === newTabUrl) return;
+  newTabUrl = url;
+  if (statusEl) {
+    statusEl.textContent = "Saved";
+    statusEl.style.color = "";
+  }
+  if (settingsStore) {
+    await settingsStore.set("newTabUrl", newTabUrl);
+    await settingsStore.save();
+  }
 }
 
 async function newSession(configId: string) {
@@ -451,11 +530,80 @@ async function newSession(configId: string) {
   if (!conn?.connectionId) return;
   showCommandResult("New tab…");
   try {
-    await invoke("new_session", { connectionId: conn.connectionId });
+    await invoke("new_session", { connectionId: conn.connectionId, url: newTabUrl || undefined });
     showCommandResult("New tab: success");
   } catch (err) {
     showCommandResult(`New tab failed: ${err}`, true);
   }
+}
+
+async function addConnection(name: string, endpoint: string) {
+  const configId = crypto.randomUUID();
+  const conn: Connection = { configId, connectionId: null, name, endpoint, status: "idle", sessions: new Map(), cpuHistory: [] };
+  connections.set(configId, conn);
+  await persist();
+  await connectConfig(conn);
+}
+
+/**
+ * Accepts `terraform output -json clients` ({ "<name>": { cdp_endpoint, ... } }),
+ * the full `terraform output -json` (the same, under clients.value), or a plain
+ * [{ name, endpoint }] list.
+ */
+function parseImportedClients(data: unknown): { name: string; endpoint: string }[] {
+  const root = data as any;
+  const clients = root?.clients?.value ?? root;
+  const entries: [string, any][] = Array.isArray(clients)
+    ? clients.map((c: any) => [c?.name, c])
+    : Object.entries(clients ?? {});
+  const result: { name: string; endpoint: string }[] = [];
+  for (const [name, value] of entries) {
+    const endpoint = value?.cdp_endpoint ?? value?.endpoint;
+    if (typeof name === "string" && typeof endpoint === "string" && /^(https?|wss?):\/\//i.test(endpoint.trim())) {
+      result.push({ name, endpoint: endpoint.trim() });
+    }
+  }
+  return result;
+}
+
+async function importConnections(file: File) {
+  let clients: { name: string; endpoint: string }[];
+  try {
+    clients = parseImportedClients(JSON.parse(await file.text()));
+  } catch (err) {
+    showCommandResult(`Import failed: ${file.name} isn't valid JSON (${err})`, true);
+    return;
+  }
+  if (clients.length === 0) {
+    showCommandResult(`Import failed: no clients with an endpoint found in ${file.name}`, true);
+    return;
+  }
+
+  const known = new Set([...connections.values()].map((c) => c.endpoint));
+  const fresh = clients.filter((c) => !known.has(c.endpoint));
+  const skipped = clients.length - fresh.length;
+  if (fresh.length === 0) {
+    showCommandResult(`Import: all ${clients.length} client(s) in ${file.name} are already added`);
+    return;
+  }
+  if (fresh.some((c) => c.endpoint.startsWith("http://") || c.endpoint.startsWith("ws://"))) {
+    const proceed = confirm(
+      `${fresh.length} connection(s) to import, some without HTTPS — their traffic travels in plaintext. Continue anyway?`
+    );
+    if (!proceed) return;
+  }
+
+  // Add them all up front (so they appear together), then connect in parallel.
+  const added: Connection[] = [];
+  for (const { name, endpoint } of fresh) {
+    const configId = crypto.randomUUID();
+    const conn: Connection = { configId, connectionId: null, name, endpoint, status: "idle", sessions: new Map(), cpuHistory: [] };
+    connections.set(configId, conn);
+    added.push(conn);
+  }
+  await persist();
+  showCommandResult(`Imported ${added.length} connection(s)${skipped ? `, skipped ${skipped} already added` : ""}`);
+  await Promise.all(added.map((conn) => connectConfig(conn)));
 }
 
 async function handleCloseSession() {
@@ -499,7 +647,21 @@ function handleSidecarEvent(event: SidecarPushEvent) {
     if (!conn) return;
     conn.status = event.status as ConnectionStatus;
     if (event.error) conn.error = event.error as string;
+    if (conn.status !== "connected") {
+      conn.stats = undefined; // stale figures would mislead while it's down
+      conn.cpuHistory = [];
+    }
     render();
+  } else if (event.type === "connectionStats") {
+    const conn = findConnectionByLiveId(event.connectionId);
+    if (!conn) return;
+    const { type: _type, connectionId: _id, ...stats } = event;
+    const firstSample = !conn.stats;
+    conn.stats = stats;
+    conn.cpuHistory = [...conn.cpuHistory, stats.cpuPercent].slice(-STATS_HISTORY);
+    const statsEl = document.getElementById(`stats-${conn.configId}`);
+    if (statsEl) fillStatsEl(statsEl, conn); // in place: a full render() flashes the live view
+    else if (firstSample) render();
   } else if (event.type === "sessionAdded" || event.type === "sessionUpdated") {
     const conn = findConnectionByLiveId(event.connectionId as string);
     if (!conn) return;
@@ -547,6 +709,21 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.querySelector("#forward-btn")?.addEventListener("click", () => runSessionCommand("go_forward", "Forward"));
   document.querySelector("#close-session-btn")?.addEventListener("click", handleCloseSession);
 
+  settingsStore = await load("settings.json", { autoSave: false });
+  newTabUrl = (await settingsStore.get<string>("newTabUrl")) ?? "";
+  const newTabUrlInput = document.querySelector<HTMLInputElement>("#new-tab-url-input");
+  const newTabUrlStatus = document.querySelector<HTMLElement>("#new-tab-url-status");
+  if (newTabUrlInput) {
+    newTabUrlInput.value = newTabUrl;
+    newTabUrlInput.addEventListener("change", () => void saveNewTabUrl(newTabUrlInput, newTabUrlStatus));
+    newTabUrlInput.addEventListener("input", () => {
+      if (newTabUrlStatus) newTabUrlStatus.textContent = "";
+    });
+    newTabUrlInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") newTabUrlInput.blur(); // commits via "change"
+    });
+  }
+
   store = await load("connections.json", { autoSave: false });
   const entries = await store.entries<StoredConfig>();
   for (const [, cfg] of entries) {
@@ -557,6 +734,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       endpoint: cfg.endpoint,
       status: "idle",
       sessions: new Map(),
+      cpuHistory: [],
     });
   }
   render();
@@ -588,12 +766,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     addConnectionDialog?.close();
+    await addConnection(name, endpoint);
+  });
 
-    const configId = crypto.randomUUID();
-    const conn: Connection = { configId, connectionId: null, name, endpoint, status: "idle", sessions: new Map() };
-    connections.set(configId, conn);
-    await persist();
-    await connectConfig(conn);
+  const importFileInput = document.querySelector<HTMLInputElement>("#import-file-input");
+  document.querySelector("#import-connections")?.addEventListener("click", () => importFileInput?.click());
+  importFileInput?.addEventListener("change", async () => {
+    const file = importFileInput.files?.[0];
+    importFileInput.value = ""; // so picking the same file again still fires
+    if (!file) return;
+    addConnectionDialog?.close();
+    await importConnections(file);
   });
 
   listen<FrameEvent>("sidecar-frame", (event) => {

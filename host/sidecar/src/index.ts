@@ -45,7 +45,7 @@ const incomingSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("addConnection"), requestId: z.number(), name: z.string(), endpoint: z.string() }),
   z.object({ type: z.literal("removeConnection"), requestId: z.number(), connectionId: z.string() }),
   z.object({ type: z.literal("listSessions"), requestId: z.number(), connectionId: z.string() }),
-  z.object({ type: z.literal("newSession"), requestId: z.number(), connectionId: z.string() }),
+  z.object({ type: z.literal("newSession"), requestId: z.number(), connectionId: z.string(), url: z.string().optional() }),
   z.object({ type: z.literal("navigate"), requestId: z.number(), connectionId: z.string(), sessionId: z.string(), url: z.string() }),
   z.object({ type: z.literal("reload"), requestId: z.number(), connectionId: z.string(), sessionId: z.string() }),
   z.object({ type: z.literal("goBack"), requestId: z.number(), connectionId: z.string(), sessionId: z.string() }),
@@ -73,7 +73,7 @@ async function handle(msg: IncomingMessage): Promise<unknown> {
     case "listSessions":
       return { sessions: await manager.listSessions(msg.connectionId) };
     case "newSession":
-      await manager.newSession(msg.connectionId);
+      await manager.newSession(msg.connectionId, msg.url);
       return {};
     case "navigate":
       await manager.navigate(msg.connectionId, msg.sessionId, msg.url);

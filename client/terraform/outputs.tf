@@ -8,6 +8,7 @@ output "clients" {
   value = {
     for name, mod in module.client : name => {
       cdp_endpoint = mod.cdp_endpoint
+      ip_address   = mod.ip_address
       novnc_url    = mod.novnc_url
     }
   }

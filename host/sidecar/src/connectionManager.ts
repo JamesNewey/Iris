@@ -6,7 +6,20 @@ import type { ConnectionConfig, ConnectionStatus, SessionSummary, SidecarEvent }
 const BASE_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 15_000;
 const DEFAULT_THUMBNAIL_INTERVAL_MS = 3000;
-const MAX_CONCURRENT_THUMBNAILS = 12;
+// Caps thumbnail screenshots in flight at once per connection, not how many
+// sessions get thumbnails: every session does, queuing for a slot in turn.
+// Per connection so one overloaded client's slow captures can't delay others.
+const MAX_CONCURRENT_CAPTURES = 4;
+const STATS_INTERVAL_MS = 5000;
+
+interface ClientStatsSample {
+  source: string;
+  cpuUsageUsec: number;
+  cpuLimitCores: number;
+  memoryBytes: number;
+  memoryLimitBytes: number;
+  timestamp: number;
+}
 
 interface SessionEntry {
   id: string;
@@ -19,6 +32,8 @@ interface SessionEntry {
   thumbnailTimer: NodeJS.Timeout | null;
   /** Last title read from the page — sent with every summary so updates never blank it. */
   title: string;
+  /** A thumbnail capture is queued or running; later ticks skip rather than pile up. */
+  capturePending: boolean;
 }
 
 interface ConnectionEntry {
@@ -30,6 +45,24 @@ interface ConnectionEntry {
   reconnectAttempt: number;
   reconnectTimer: NodeJS.Timeout | null;
   closed: boolean;
+  freeCaptureSlots: number;
+  captureQueue: (() => void)[];
+  statsTimer: NodeJS.Timeout | null;
+  lastStats: ClientStatsSample | null;
+}
+
+async function acquireCaptureSlot(entry: ConnectionEntry): Promise<void> {
+  if (entry.freeCaptureSlots > 0) {
+    entry.freeCaptureSlots -= 1;
+    return;
+  }
+  await new Promise<void>((resolve) => entry.captureQueue.push(resolve)); // FIFO, so no session starves
+}
+
+function releaseCaptureSlot(entry: ConnectionEntry): void {
+  const next = entry.captureQueue.shift();
+  if (next) next(); // hand the slot straight to the next waiter
+  else entry.freeCaptureSlots += 1;
 }
 
 function toSummary(entry: SessionEntry): SessionSummary {
@@ -45,7 +78,6 @@ function toSummary(entry: SessionEntry): SessionSummary {
 
 export class ConnectionManager {
   private connections = new Map<string, ConnectionEntry>();
-  private activeThumbnailCount = 0;
 
   constructor(private emit: (event: SidecarEvent) => void) {}
 
@@ -60,6 +92,10 @@ export class ConnectionManager {
       reconnectAttempt: 0,
       reconnectTimer: null,
       closed: false,
+      freeCaptureSlots: MAX_CONCURRENT_CAPTURES,
+      captureQueue: [],
+      statsTimer: null,
+      lastStats: null,
     };
     this.connections.set(id, entry);
     await this.connectEntry(entry);
@@ -72,6 +108,7 @@ export class ConnectionManager {
     const entry = this.getEntry(connectionId);
     entry.closed = true;
     if (entry.reconnectTimer) clearTimeout(entry.reconnectTimer);
+    this.stopStats(entry);
     for (const session of entry.sessions.values()) {
       this.clearThumbnailTimer(session);
     }
@@ -90,13 +127,16 @@ export class ConnectionManager {
     return Promise.all([...entry.sessions.values()].map((s) => this.summarizeWithTitle(s)));
   }
 
-  async newSession(connectionId: string): Promise<void> {
+  async newSession(connectionId: string, url?: string): Promise<void> {
     const entry = this.getEntry(connectionId);
     const context = entry.browser?.contexts()[0];
     if (!context) throw new Error(`Connection ${connectionId} has no browser context to open a tab in`);
-    await context.newPage();
+    const page = await context.newPage();
     // the context's 'page' listener (registered in connectEntry) picks the new
-    // page up and emits sessionAdded.
+    // page up and emits sessionAdded; navigation then updates it as usual.
+    // Only wait for the navigation to start: a slow page mustn't make the
+    // command report failure for a tab that did open.
+    if (url) await page.goto(url, { waitUntil: "commit" });
   }
 
   async navigate(connectionId: string, sessionId: string, url: string): Promise<void> {
@@ -158,23 +198,28 @@ export class ConnectionManager {
   }
 
   async startThumbnail(connectionId: string, sessionId: string, intervalMs = DEFAULT_THUMBNAIL_INTERVAL_MS): Promise<{ started: boolean }> {
-    const { session } = this.getSession(connectionId, sessionId);
+    const { entry, session } = this.getSession(connectionId, sessionId);
     if (session.thumbnailTimer) return { started: true };
-    if (this.activeThumbnailCount >= MAX_CONCURRENT_THUMBNAILS) return { started: false };
 
-    this.activeThumbnailCount += 1;
     const capture = async () => {
+      if (session.capturePending) return;
+      session.capturePending = true;
+      await acquireCaptureSlot(entry);
       try {
+        if (!session.thumbnailTimer || session.page.isClosed()) return; // stopped while queued
         const buf = await session.page.screenshot({ type: "jpeg", quality: 40, timeout: intervalMs });
         this.emit({ type: "thumbnail", connectionId, sessionId, data: buf.toString("base64") });
         // Also catches titles a page changes after load (SPAs, unread counts).
         await this.refreshTitle(connectionId, session);
       } catch {
         // page may be navigating or closed between ticks; skip this frame
+      } finally {
+        releaseCaptureSlot(entry);
+        session.capturePending = false;
       }
     };
-    void capture();
     session.thumbnailTimer = setInterval(capture, intervalMs);
+    void capture();
     return { started: true };
   }
 
@@ -216,8 +261,8 @@ export class ConnectionManager {
     if (!session.thumbnailTimer) return;
     clearInterval(session.thumbnailTimer);
     session.thumbnailTimer = null;
-    this.activeThumbnailCount = Math.max(0, this.activeThumbnailCount - 1);
   }
+
 
   private async summarizeWithTitle(session: SessionEntry): Promise<SessionSummary> {
     try {
@@ -247,6 +292,7 @@ export class ConnectionManager {
     entry.status = "connected";
     entry.reconnectAttempt = 0;
     this.emit({ type: "connectionStatus", connectionId: entry.config.id, status: "connected" });
+    this.startStats(entry);
 
     browser.on("disconnected", () => this.handleDisconnect(entry));
 
@@ -270,6 +316,7 @@ export class ConnectionManager {
       createdAt: Date.now(),
       thumbnailTimer: null,
       title: "",
+      capturePending: false,
     };
     entry.sessions.set(id, session);
 
@@ -297,6 +344,7 @@ export class ConnectionManager {
     if (entry.closed) return; // deliberate removeConnection, not a drop
 
     entry.browser = null;
+    this.stopStats(entry);
     for (const [id, session] of entry.sessions) {
       this.clearThumbnailTimer(session);
       this.emit({ type: "sessionRemoved", connectionId: entry.config.id, sessionId: id });
@@ -306,6 +354,59 @@ export class ConnectionManager {
     entry.status = "reconnecting";
     this.emit({ type: "connectionStatus", connectionId: entry.config.id, status: "reconnecting" });
     this.scheduleReconnect(entry);
+  }
+
+  /**
+   * Polls the client's /iris/stats (served by its cdp-proxy.js, not Chrome).
+   * CPU there is a cumulative counter, so each sample is diffed with the last.
+   */
+  private startStats(entry: ConnectionEntry): void {
+    this.stopStats(entry);
+    let statsUrl: string;
+    try {
+      const url = new URL(entry.config.endpoint);
+      url.protocol = url.protocol === "wss:" || url.protocol === "https:" ? "https:" : "http:";
+      statsUrl = `${url.origin}/iris/stats`;
+    } catch {
+      return;
+    }
+
+    const poll = async () => {
+      try {
+        const res = await fetch(statsUrl, { signal: AbortSignal.timeout(STATS_INTERVAL_MS - 500) });
+        if (res.status === 404) {
+          this.stopStats(entry); // client image predates /iris/stats; nothing to show
+          return;
+        }
+        if (!res.ok) return;
+        const sample = (await res.json()) as ClientStatsSample;
+        const prev = entry.lastStats;
+        entry.lastStats = sample;
+        if (!prev || prev.source !== sample.source) return; // need two samples for a CPU rate
+        const elapsedUsec = (sample.timestamp - prev.timestamp) * 1000;
+        if (elapsedUsec <= 0 || !entry.statsTimer) return;
+        const cpuPercent = ((sample.cpuUsageUsec - prev.cpuUsageUsec) / (elapsedUsec * sample.cpuLimitCores)) * 100;
+        this.emit({
+          type: "connectionStats",
+          connectionId: entry.config.id,
+          cpuPercent: Math.max(0, Math.min(100, cpuPercent)),
+          cpuLimitCores: sample.cpuLimitCores,
+          memoryBytes: sample.memoryBytes,
+          memoryLimitBytes: sample.memoryLimitBytes,
+          source: sample.source,
+        });
+      } catch {
+        // client busy or unreachable this tick; try again next time
+      }
+    };
+    entry.statsTimer = setInterval(poll, STATS_INTERVAL_MS);
+    void poll();
+  }
+
+  private stopStats(entry: ConnectionEntry): void {
+    if (entry.statsTimer) clearInterval(entry.statsTimer);
+    entry.statsTimer = null;
+    entry.lastStats = null;
   }
 
   private scheduleReconnect(entry: ConnectionEntry): void {

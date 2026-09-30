@@ -21,4 +21,15 @@ export type SidecarEvent =
   | { type: "sessionUpdated"; connectionId: string; session: SessionSummary }
   | { type: "sessionRemoved"; connectionId: string; sessionId: string }
   | { type: "frame"; connectionId: string; sessionId: string; data: string }
-  | { type: "thumbnail"; connectionId: string; sessionId: string; data: string };
+  | { type: "thumbnail"; connectionId: string; sessionId: string; data: string }
+  | {
+      type: "connectionStats";
+      connectionId: string;
+      /** CPU used, as a percentage of the client container's CPU limit. */
+      cpuPercent: number;
+      cpuLimitCores: number;
+      memoryBytes: number;
+      memoryLimitBytes: number;
+      /** "cgroup2"/"cgroup1" = the container itself; "host" = whole machine (fallback). */
+      source: string;
+    };

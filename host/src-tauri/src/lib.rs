@@ -90,7 +90,18 @@ macro_rules! sidecar_command {
 sidecar_command!(add_connection, "addConnection", name: String => "name", endpoint: String => "endpoint");
 sidecar_command!(remove_connection, "removeConnection", connection_id: String => "connectionId");
 sidecar_command!(list_sessions, "listSessions", connection_id: String => "connectionId");
-sidecar_command!(new_session, "newSession", connection_id: String => "connectionId");
+#[tauri::command]
+async fn new_session(
+    state: tauri::State<'_, Arc<SidecarState>>,
+    connection_id: String,
+    url: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = json!({ "type": "newSession", "connectionId": connection_id });
+    if let Some(url) = url {
+        payload["url"] = json!(url);
+    }
+    send_request(&state, payload).await
+}
 sidecar_command!(navigate, "navigate", connection_id: String => "connectionId", session_id: String => "sessionId", url: String => "url");
 sidecar_command!(reload_session, "reload", connection_id: String => "connectionId", session_id: String => "sessionId");
 sidecar_command!(go_back, "goBack", connection_id: String => "connectionId", session_id: String => "sessionId");
