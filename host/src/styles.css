@@ -28,24 +28,57 @@ body {
   height: 100vh;
 }
 
+/* Dark purple in both colour schemes. */
 .app-header {
   display: flex;
   align-items: center;
   gap: 0.5em;
   padding: 0.6em 1em;
-  border-bottom: 1px solid #ddd;
-  background: #fff;
-}
-
-.app-header label {
-  font-weight: 600;
-  white-space: nowrap;
+  border-bottom: 1px solid #4a2d6e;
+  background: #2e1a47;
+  color: #f3e9ff;
 }
 
 .app-header input {
   flex: 1;
-  max-width: 40em;
   min-width: 0;
+  color: #fff;
+  background-color: #3d2560;
+  border-color: #6b4a94;
+}
+
+.app-header input::placeholder {
+  color: #b9a3d6;
+}
+
+.app-header input:focus {
+  outline: 2px solid #a57de8;
+  outline-offset: -1px;
+}
+
+.app-header button {
+  color: #fff;
+  background: #7c4dcc;
+  border-color: #7c4dcc;
+  font-weight: 600;
+}
+
+.app-header button:hover {
+  background: #8f5fe0;
+}
+
+.app-header button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.app-header .muted {
+  color: #cdb8ea;
+  white-space: nowrap;
+}
+
+.app-header .status-error {
+  color: #ff9d97;
 }
 
 .app-body {

@@ -11,8 +11,8 @@
   <body>
     <div class="app">
       <header class="app-header">
-        <label for="new-tab-url-input">New tab URL</label>
-        <input id="new-tab-url-input" placeholder="about:blank" spellcheck="false" />
+        <input id="new-tab-url-input" placeholder="URL for every tab — also the default for new tabs" aria-label="URL" spellcheck="false" />
+        <button id="go-all-btn" type="button" title="Open this URL in every tab of every connected client">Go</button>
         <span id="new-tab-url-status" class="muted small"></span>
       </header>
       <main class="app-body">

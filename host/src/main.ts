@@ -506,23 +506,56 @@ async function saveNewTabUrl(input: HTMLInputElement, statusEl: HTMLElement | nu
   const raw = input.value.trim();
   const url = raw ? normalizeUrl(raw) : "";
   if (url === null) {
-    if (statusEl) {
-      statusEl.textContent = "Invalid URL — not saved";
-      statusEl.style.color = "#a12622";
-    }
+    setHeaderStatus(statusEl, "Invalid URL — not saved", true);
     return;
   }
   input.value = url;
   if (url === newTabUrl) return;
   newTabUrl = url;
-  if (statusEl) {
-    statusEl.textContent = "Saved";
-    statusEl.style.color = "";
-  }
+  setHeaderStatus(statusEl, "Saved");
   if (settingsStore) {
     await settingsStore.set("newTabUrl", newTabUrl);
     await settingsStore.save();
   }
+}
+
+function setHeaderStatus(statusEl: HTMLElement | null, text: string, isError = false) {
+  if (!statusEl) return;
+  statusEl.textContent = text;
+  statusEl.classList.toggle("status-error", isError);
+}
+
+/** Navigates every session of every connected client to the header's URL. */
+async function goAll(input: HTMLInputElement, button: HTMLButtonElement, statusEl: HTMLElement | null) {
+  const raw = input.value.trim();
+  if (!raw) return;
+  const url = normalizeUrl(raw);
+  if (!url) {
+    setHeaderStatus(statusEl, `Invalid URL: ${raw}`, true);
+    return;
+  }
+  input.value = url;
+
+  const targets: { connectionId: string; sessionId: string }[] = [];
+  let clients = 0;
+  for (const conn of connections.values()) {
+    if (!conn.connectionId || conn.status !== "connected" || conn.sessions.size === 0) continue;
+    clients++;
+    for (const sessionId of conn.sessions.keys()) targets.push({ connectionId: conn.connectionId, sessionId });
+  }
+  if (targets.length === 0) {
+    setHeaderStatus(statusEl, "No open tabs on any connected client", true);
+    return;
+  }
+
+  button.disabled = true;
+  setHeaderStatus(statusEl, `Opening in ${targets.length} tab(s)…`);
+  const results = await Promise.allSettled(targets.map((t) => invoke("navigate", { ...t, url })));
+  button.disabled = false;
+
+  const failed = results.filter((r) => r.status === "rejected").length;
+  const summary = `${targets.length - failed} of ${targets.length} tab(s) on ${clients} client(s)`;
+  setHeaderStatus(statusEl, failed ? `${summary} — ${failed} failed` : `Sent to ${summary}`, failed > 0);
 }
 
 async function newSession(configId: string) {
@@ -719,8 +752,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     newTabUrlInput.addEventListener("input", () => {
       if (newTabUrlStatus) newTabUrlStatus.textContent = "";
     });
+    const goAllBtn = document.querySelector<HTMLButtonElement>("#go-all-btn");
+    goAllBtn?.addEventListener("click", () => void goAll(newTabUrlInput, goAllBtn, newTabUrlStatus));
     newTabUrlInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") newTabUrlInput.blur(); // commits via "change"
+      if (e.key !== "Enter") return;
+      newTabUrlInput.blur(); // saves it as the new-tab default via "change"
+      goAllBtn?.click();
     });
   }
 
